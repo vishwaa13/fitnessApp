@@ -133,8 +133,9 @@ def test_flights_merge_gmail_duplicates_and_attach_to_events():
 def test_select_matches_pesa_disc_title():
     from fitapp.config import load_config
     kw = load_config()["events"]["keywords"]
-    out = select([cal("Pesa disc - Spain frisbee", 7, 5), cal("Frisbee practice", 3)], kw, [], TODAY)
-    assert [e["title"] for e in out] == ["Pesa disc - Spain frisbee"]
+    out = select([cal("Pesa disc - Spain frisbee", 7, 5), cal("Gurls Hat - frisbee", 23, 2), cal("Tempo run", 3)],
+                 kw, [], TODAY)
+    assert [e["title"] for e in out] == ["Pesa disc - Spain frisbee", "Gurls Hat - frisbee"]
 
 
 def test_gemini_reply_parsing_and_request(monkeypatch):

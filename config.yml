@@ -38,7 +38,7 @@ readiness:
                   hill, hills, fartlek, speed, heavy, strength, gym, lower, legs,
                   squat, deadlift, plyo, plyometrics]
   # Never moved, even on a red day.
-  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, pesca, pesa, pescadisco, disco, race]
+  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, pesca, pesa, pescadisco, disco, frisbee, race]
   # Replacement sessions, picked by the first group whose words match the title.
   light_versions:
     - match: [interval, intervals, tempo, threshold, track, vo2, sprint, sprints, hill, hills, fartlek, speed]
@@ -78,7 +78,7 @@ tournaments:
 # entry's location field is shown.
 # ---------------------------------------------------------------------------
 events:
-  keywords: [tryout, tryouts, pesca, pesa, pescadisco, disco, ebucc, hat, burla, tournament, championship, championships]
+  keywords: [tryout, tryouts, pesca, pesa, pescadisco, disco, ebucc, hat, burla, frisbee, tournament, championship, championships]
   look_ahead_days: 365
   gemini_model: gemini-2.5-flash   # its free tier includes Google Search; newer models' free tiers don't
 
