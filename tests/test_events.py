@@ -57,10 +57,21 @@ def test_enrich_without_api_key_and_with_failures():
     events = select([cal("EBUCC", 50)], KEYWORDS, [], TODAY)
     assert enrich(events, {}, None, None, TODAY)[0]["lookup_status"].startswith("add ANTHROPIC_API_KEY")
 
+    calls = []
+
     def boom(*a):
+        calls.append(a[0])
         raise TimeoutError
-    out = enrich(events, {}, boom, None, TODAY)
+    two = select([cal("EBUCC", 50), cal("Gurls hat", 60)], KEYWORDS, [], TODAY)
+    cache = {}
+    now = datetime(2026, 10, 1, 6, tzinfo=timezone.utc)
+    out = enrich(two, cache, boom, None, TODAY, now)
     assert out[0]["info"] is None and out[0]["lookup_status"] == "lookup failed: TimeoutError"
+    assert calls == ["EBUCC"]                          # stops after the first failure
+    enrich(two, cache, boom, None, TODAY, now + timedelta(days=1))
+    assert calls == ["EBUCC", "Gurls hat"]             # EBUCC waits; the untried one goes next
+    enrich(two, cache, boom, None, TODAY, now + timedelta(days=4))
+    assert calls[-1] == "EBUCC"                        # retried after 3 days
 
 
 class FakeMessages:
@@ -226,3 +237,35 @@ def test_gemini_bad_key_stops_immediately(monkeypatch):
     with pytest.raises(gl.GeminiError):
         gl.GeminiLookup(api_key="k", models=["a", "b", "c"]).lookup("x", TODAY, TODAY)
     assert len(calls) == 1
+
+
+def test_gemini_quota_on_every_model_checks_without_search(monkeypatch, caplog):
+    import pytest
+    from fitapp.sources import gemini_lookup as gl
+    bodies = []
+
+    class Quota:
+        status_code = 429
+
+        def json(self):
+            return {"error": {"message": "You exceeded your current quota"}}
+
+    class Ok:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": []}
+
+    def fake_post(url, json, timeout, headers):
+        bodies.append(json)
+        return Ok() if "tools" not in json else Quota()
+
+    monkeypatch.setattr(gl.requests, "post", fake_post)
+    finder = gl.GeminiLookup(api_key="k", models=["a", "b"])
+    with pytest.raises(gl.GeminiError):
+        finder.lookup("x", TODAY, TODAY)
+    assert len(bodies) == 3 and "tools" not in bodies[-1]
+    assert "free tier doesn't include search" in caplog.text
+    with pytest.raises(gl.GeminiError):
+        finder.lookup("y", TODAY, TODAY)
+    assert len(bodies) == 5                                  # diagnosed only once

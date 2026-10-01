@@ -70,6 +70,11 @@ def enrich(events: list[dict], cache: dict[str, dict], lookup: Callable[..., dic
             except Exception as exc:  # noqa: BLE001 - keep the old answer if there is one
                 log.error("Event lookup failed: %s", type(exc).__name__)
                 status = f"lookup failed: {type(exc).__name__}"
+                # Remember the failure so it's retried in a few days, not on every run,
+                # and skip the other events this run: they'd fail the same way.
+                cached = {"looked_up": now.isoformat(), "info": (cached or {}).get("info")}
+                cache[key] = cached
+                lookup = None
         info = (cached or {}).get("info")
         distance = None
         if info and home and info.get("latitude") is not None and info.get("longitude") is not None:

@@ -113,6 +113,7 @@ class GeminiLookup:
             "generationConfig": {"temperature": 0.2},
         }
         last_status = None
+        statuses = []
         for model in list(self.models):
             resp = self._call(model, body)
             if resp.status_code == 200:
@@ -124,9 +125,25 @@ class GeminiLookup:
                 message = ""
             log.error("Gemini %s HTTP %s: %s", model, resp.status_code, message)
             last_status = resp.status_code
+            statuses.append(resp.status_code)
             if resp.status_code in (401, 403) and "api key" in message.lower() or "API key not valid" in message:
                 break  # a bad key fails on every model
+        if 429 in statuses and set(statuses) <= {404, 429}:
+            self._diagnose_quota(body)
         raise GeminiError(f"HTTP {last_status}")
+
+    def _diagnose_quota(self, body: dict) -> None:
+        """Every model refused with a quota error: check once whether it's the search tool."""
+        if getattr(self, "_diagnosed", False):
+            return
+        self._diagnosed = True
+        plain = {k: v for k, v in body.items() if k != "tools"}
+        resp = self._call(self.models[0], plain)
+        if resp.status_code == 200:
+            log.error("Gemini answers without Google Search, so this key's free tier doesn't include "
+                      "search. Event lookups need a paid Gemini tier; the calendar location is shown instead.")
+        else:
+            log.error("Gemini refuses even without search (HTTP %s): the key has no free quota.", resp.status_code)
 
     @staticmethod
     def _answer(data: dict) -> dict | None:
