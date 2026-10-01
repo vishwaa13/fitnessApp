@@ -142,8 +142,11 @@ class GeminiLookup:
         if resp.status_code == 200:
             log.error("Gemini answers without Google Search, so this key's free tier doesn't include "
                       "search. Event lookups need a paid Gemini tier; the calendar location is shown instead.")
+        elif resp.status_code == 429:
+            log.error("Gemini refuses even without search (HTTP 429): this key has no free quota at all.")
         else:
-            log.error("Gemini refuses even without search (HTTP %s): the key has no free quota.", resp.status_code)
+            log.error("Gemini check without search was inconclusive (HTTP %s); trying again in 3 days.",
+                      resp.status_code)
 
     @staticmethod
     def _answer(data: dict) -> dict | None:
