@@ -230,7 +230,8 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
             horizon = events
     chosen = select(horizon, cfg["events"]["keywords"], cfg["tournaments"].get("manual"), today)
     finder = EventLookup()
-    sources["event_lookup"] = "ok" if finder.configured else "not configured"
+    if finder.configured:
+        sources["event_lookup"] = "ok"
     upcoming = enrich(chosen, state.setdefault("event_info", {}),
                       finder.lookup if finder.configured else None, detect_home(activities, cfg), today)
     log.info("Events: %d upcoming", len(upcoming))

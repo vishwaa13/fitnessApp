@@ -133,7 +133,7 @@
     const footer = h("footer", { class: "footer" },
       Object.entries(d.sources || {}).map(([k, v]) => h("span", null, `${k[0].toUpperCase() + k.slice(1)}: ${v}`)),
       h("span", null, "Max HR used: " + fmt(d.athlete && d.athlete.max_hr)));
-    app.replaceChildren(top, banner, verdictCard(d.today), tabs, panel, footer);
+    app.replaceChildren(...[top, banner, verdictCard(d.today), tabs, panel, footer].filter(Boolean));
     renderTab();
   }
   function renderTab() {
@@ -269,7 +269,7 @@
       return;
     }
     panel.append(h("div", { class: "stack" },
-      h("p", { class: "note" }, "Future frisbee events from your calendar. Where each one is was looked up by Claude with a web search, so check the official page before booking travel. Hard sessions are never moved onto these days or the day before."),
+      h("p", { class: "note" }, "Future frisbee events from your calendar. Put the venue or town in a calendar entry's location field and it shows here. Hard sessions are never moved onto these days or the day before."),
       h("div", { class: "grid2" }, evs.map(eventCard))));
   }
   function eventCard(e) {
@@ -291,8 +291,10 @@
           i.website && /^https?:\/\//.test(i.website) ? h("a", { href: i.website, target: "_blank", rel: "noopener noreferrer" }, "Event page") : null,
           i.website ? " · " : null,
           h("span", { class: "muted" }, `Found with web search · ${i.confidence} confidence`)))
-        : h("p", { class: "note" }, e.calendar_location ? "Calendar location: " + e.calendar_location + ". " : "",
-          e.lookup_status === "not found" ? "Couldn't find this event online. Add the place to the calendar entry's location field and it will be used next time." : `Details: ${e.lookup_status}.`));
+        : e.calendar_location ? h("p", { class: "event-place" }, e.calendar_location)
+        : h("p", { class: "note muted" }, e.source === "config"
+          ? "From config.yml. Add it to your calendar with a location to show where it is."
+          : "No location yet. Add the venue or town to this calendar entry's location field."));
   }
 
   // ---------- Recovery ----------
