@@ -1,0 +1,118 @@
+# fitnessApp settings. Nothing in here is secret: credentials live in GitHub
+# Actions secrets (see README). Every key is optional; anything you delete
+# falls back to the default in fitapp/config.py.
+
+timezone: Europe/Rome
+
+athlete:
+  max_hr: null            # leave null to use the highest HR Garmin has recorded
+  # Home base, used to tell "travel" and "away tournament" days apart.
+  # Leave null to auto-detect from where most of your activities start.
+  home: null              # e.g. {lat: 55.68, lon: 12.57}
+
+# How many days of daily Garmin metrics (HRV, sleep, readiness) to keep.
+history_days: 180
+
+# ---------------------------------------------------------------------------
+# 1. Morning readiness swapper
+# ---------------------------------------------------------------------------
+readiness:
+  # off      – don't touch the calendar
+  # suggest  – show the swap on the dashboard but leave the calendar alone
+  # apply    – move the hard session and drop in the light one
+  mode: apply
+  swap_when: red          # red | amber
+  calendar_id: null       # your Google Calendar ID (usually your Gmail address); or set GOOGLE_CALENDAR_ID secret
+  look_ahead_days: 7      # how far ahead to search for a "good day"
+  thresholds:
+    readiness_red: 40     # Garmin training readiness score below this = red
+    readiness_amber: 60
+    sleep_score_red: 50
+    sleep_score_amber: 65
+    sleep_hours_red: 5.5
+    sleep_hours_amber: 6.5
+    rhr_amber_bpm: 5      # resting HR this far above your 7-day average
+    rhr_red_bpm: 8
+  # Calendar events whose title contains one of these words count as "hard".
+  hard_keywords: [interval, intervals, tempo, threshold, track, vo2, sprint, sprints,
+                  hill, hills, fartlek, speed, heavy, strength, gym, lower, legs,
+                  squat, deadlift, plyo, plyometrics]
+  # Never moved, even on a red day.
+  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, race]
+  # Replacement sessions, picked by the first group whose words match the title.
+  light_versions:
+    - match: [interval, intervals, tempo, threshold, track, vo2, sprint, sprints, hill, hills, fartlek, speed]
+      title: "Easy run · 30–40 min Z2"
+      description: "Conversational pace, HR under Z2 ceiling. Strides optional only if you feel good after 20 min."
+    - match: [heavy, strength, gym, lower, legs, squat, deadlift, plyo, plyometrics]
+      title: "Mobility + light technique · 30 min"
+      description: "Same movements at ~60% of working weight, 2×8, no grinding. Then 10 min hips/glutes mobility."
+  default_light:
+    title: "Easy Z1–Z2 session · 30 min"
+    description: "Keep it genuinely easy. Today is for recovery."
+
+# ---------------------------------------------------------------------------
+# 2. Tournament auto-report
+# ---------------------------------------------------------------------------
+tournaments:
+  # Garmin activity types that can be a game.
+  game_types: [ultimate_disc, ultimate, ultimate_frisbee, soccer, rugby, field_hockey,
+               lacrosse, basketball, volleyball, beach_volleyball, team_sport, other]
+  # Activity names containing these words are games whatever their type.
+  game_keywords: [game, match, vs, ultimate, frisbee, tournament, burla, hat, tryout, ebucc, pesca]
+  # Rename tournaments by where they happened.
+  names_by_location:
+    Viareggio: Burla
+  # Events the detector might miss, and upcoming ones. The readiness swapper
+  # never moves a hard session onto these days or the day before them.
+  manual:
+    - {name: "Team Denmark tryouts", start: 2026-10-03, end: 2026-10-03}
+  #  - {name: "Pesca Disco Hat", start: YYYY-MM-DD, end: YYYY-MM-DD}
+  #  - {name: "EBUCC", start: YYYY-MM-DD, end: YYYY-MM-DD}
+  hrv_rebound_tolerance: 0.05   # "rebounded" = HRV back within 5% of the pre-event baseline
+
+# ---------------------------------------------------------------------------
+# 3. Progressive overload workout builder
+# ---------------------------------------------------------------------------
+overload:
+  keep_note_title: gym logs
+  date_order: DMY         # how to read 03/10 in your notes: DMY or MDY
+  weight_unit: kg
+  upload_to_garmin: true
+  schedule_on_calendar: true    # put "up next" on the Garmin calendar on your next gym day
+  write_activity_descriptions: true
+  rest_seconds: 120
+  default_increment: 2.5
+  default_rep_range: [8, 12]
+  # First matching rule wins; "match" is checked against the exercise name.
+  rules:
+    - {match: [db, dumbbell, bulgarian, split squat, lunge, goblet, kettlebell, kb], rep_range: [8, 12], increment: 2}
+    - {match: [squat, deadlift, trap bar, leg press, hip thrust], rep_range: [5, 8], increment: 5}
+    - {match: [bench, press, ohp, row, pull-up, pullup, pull up, chin-up, chin up, pulldown, rdl, romanian], rep_range: [6, 10], increment: 2.5}
+    - {match: [curl, raise, extension, fly, calf, face pull], rep_range: [10, 15], increment: 1.25}
+  # Map an exercise to Garmin's exercise library so the watch shows its name.
+  # Unknown lifts still upload; the name goes in the step note instead.
+  garmin_exercise_overrides: {}
+  #  "bulgarian split squat": {category: LUNGE, name: DUMBBELL_BULGARIAN_SPLIT_SQUAT}
+
+# ---------------------------------------------------------------------------
+# 7. Recovery correlation dashboard
+# ---------------------------------------------------------------------------
+recovery:
+  keep_tags_note_title: recovery tags   # lines like "27/09 alcohol, travel"
+  late_training_hour: 20                # sessions ending after 20:00 count as late
+  travel_km: 150                        # activities this far from home count as travel
+  window_days: 180
+
+# ---------------------------------------------------------------------------
+# Injury early-warning (the "when could I get injured" part)
+# ---------------------------------------------------------------------------
+injury:
+  rest_day_load: 25             # days below this Garmin training load count as rest
+  high_day_load: 180            # days above this count as high intensity
+  acwr_caution: 1.3
+  acwr_high: 1.5
+  monotony_caution: 2.0
+  # Past injuries. The dashboard shows what your load looked like before each one.
+  history: []
+  #  - {date: 2026-07-14, label: "Glute strain"}

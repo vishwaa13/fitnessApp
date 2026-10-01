@@ -1,0 +1,6 @@
+garminconnect==0.3.2
+gkeepapi==0.17.1
+google-api-python-client==2.201.0
+google-auth==2.59.1
+cryptography==50.0.2
+PyYAML==6.0.3

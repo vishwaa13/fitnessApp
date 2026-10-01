@@ -1,0 +1,87 @@
+name: Refresh dashboard
+
+on:
+  schedule:
+    # Hourly through the morning (06:20–12:20 Rome in summer, 05:20–11:20 in winter),
+    # so the first run after your watch syncs makes the readiness call.
+    - cron: "20 4-10 * * *"
+    # Afternoon and evening: picks up gym sessions for next targets and activity notes.
+    - cron: "20 14,18 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Read only: don't change Garmin or the calendar"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_PASSPHRASE: ${{ secrets.DASHBOARD_PASSPHRASE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Demo data (shown until your secrets are set)
+        run: python -m fitapp --demo --out site/data
+
+      - name: Restore saved state
+        if: env.HAS_PASSPHRASE == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Fetch, analyse and act
+        if: env.HAS_PASSPHRASE == 'true'
+        env:
+          DASHBOARD_PASSPHRASE: ${{ secrets.DASHBOARD_PASSPHRASE }}
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_KEEP_MASTER_TOKEN: ${{ secrets.GOOGLE_KEEP_MASTER_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+        run: python -m fitapp --out site/data ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Save state for the next run
+        if: always() && env.HAS_PASSPHRASE == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: state-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
