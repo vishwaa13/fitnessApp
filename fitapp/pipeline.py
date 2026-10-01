@@ -216,9 +216,10 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     else:
         sources["calendar"] = "not configured"
 
-    # --- Upcoming events, located with Claude + web search ------------------------
-    from .events import enrich, select
+    # --- Upcoming events and flights, located with Gemini (or Claude) + web search -
+    from .events import attach_flights, enrich, flights, select
     from .sources.event_lookup import EventLookup
+    from .sources.gemini_lookup import GeminiLookup
 
     horizon: list[dict] = []
     if events is not None:
@@ -229,16 +230,23 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
             log.error("Calendar (events) failed: %s", describe_error(exc))
             horizon = events
     chosen = select(horizon, cfg["events"]["keywords"], cfg["tournaments"].get("manual"), today)
-    finder = EventLookup()
-    if finder.configured:
-        sources["event_lookup"] = "ok"
+    # Free Gemini (GEMINI_API_CODE) first; Claude only if its key is set instead.
+    finder = None
+    for name, candidate in (("gemini", GeminiLookup(model=cfg["events"].get("gemini_model"))),
+                            ("claude", EventLookup())):
+        if candidate.configured:
+            finder = candidate
+            sources["event_lookup"] = name
+            break
     upcoming = enrich(chosen, state.setdefault("event_info", {}),
-                      finder.lookup if finder.configured else None, detect_home(activities, cfg), today)
+                      finder.lookup if finder else None, detect_home(activities, cfg), today)
+    upcoming, other_flights = attach_flights(upcoming, flights(horizon, today))
     log.info("Events: %d upcoming", len(upcoming))
 
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
                    upcoming_events=upcoming)
+    data["travel"] = other_flights
 
     # --- Act: calendar swaps ------------------------------------------------
     mode = cfg["readiness"]["mode"]

@@ -2,7 +2,7 @@
 # Actions secrets (see README). Every key is optional; anything you delete
 # falls back to the default in fitapp/config.py.
 
-timezone: Europe/Rome
+timezone: Europe/Copenhagen
 
 athlete:
   max_hr: null            # leave null to use the highest HR Garmin has recorded
@@ -38,7 +38,7 @@ readiness:
                   hill, hills, fartlek, speed, heavy, strength, gym, lower, legs,
                   squat, deadlift, plyo, plyometrics]
   # Never moved, even on a red day.
-  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, pesca, disco, race]
+  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, pesca, pesa, pescadisco, disco, race]
   # Replacement sessions, picked by the first group whose words match the title.
   light_versions:
     - match: [interval, intervals, tempo, threshold, track, vo2, sprint, sprints, hill, hills, fartlek, speed]
@@ -73,12 +73,14 @@ tournaments:
 
 # ---------------------------------------------------------------------------
 # Upcoming events tab: future calendar events whose title contains one of these
-# words. Each one is looked up once with Claude + web search (needs the
-# ANTHROPIC_API_KEY secret) to find where it is.
+# words, with their flights. Each event is looked up once with Gemini + Google
+# Search if the free GEMINI_API_CODE secret is set; otherwise the calendar
+# entry's location field is shown.
 # ---------------------------------------------------------------------------
 events:
-  keywords: [tryout, tryouts, pesca, disco, ebucc, hat, burla, tournament, championship, championships]
+  keywords: [tryout, tryouts, pesca, pesa, pescadisco, disco, ebucc, hat, burla, tournament, championship, championships]
   look_ahead_days: 365
+  gemini_model: gemini-2.5-flash   # its free tier includes Google Search; newer models' free tiers don't
 
 # ---------------------------------------------------------------------------
 # 3. Progressive overload workout builder

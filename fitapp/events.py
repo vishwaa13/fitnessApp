@@ -84,3 +84,44 @@ def enrich(events: list[dict], cache: dict[str, dict], lookup: Callable[..., dic
             "looked_up": (cached or {}).get("looked_up"),
         })
     return out
+
+
+# --------------------------------------------------------------------------
+# Flights: Gmail adds them to the calendar as "Flight to Porto (D8 3612)".
+# --------------------------------------------------------------------------
+FLIGHT_RE = re.compile(r"^\s*(?:✈\s*)?flight\b", re.I)
+CODE_RE = re.compile(r"\(([A-Z0-9]{2}\s?\d{1,4}[A-Z]?)\)")
+DEST_RE = re.compile(r"flight\s+to\s+([^(]+?)\s*(?:\(|$)", re.I)
+
+
+def flights(calendar_events: list[dict], today: date) -> list[dict]:
+    """Upcoming flights, with Gmail's duplicate copies of the same flight merged."""
+    best: dict[tuple, dict] = {}
+    for ev in calendar_events:
+        title = (ev.get("title") or "").strip()
+        if ev.get("all_day") or not FLIGHT_RE.search(title) or _day(ev["end"]) < today:
+            continue
+        codes = CODE_RE.findall(title)
+        code = codes[-1].replace(" ", "") if codes else None
+        dest = DEST_RE.search(title)
+        item = {"title": title, "code": code, "to": dest.group(1).strip() if dest else None,
+                "from": ev.get("location") or None,
+                "depart": ev["start"].isoformat(), "arrive": ev["end"].isoformat()}
+        key = (code or title.lower(), item["depart"])
+        if key not in best or len(title) < len(best[key]["title"]):
+            best[key] = item
+    return sorted(best.values(), key=lambda f: f["depart"])
+
+
+def attach_flights(events: list[dict], trip_flights: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Give each event the flights from 3 days before to 2 days after it; return the rest."""
+    used: set[int] = set()
+    for ev in events:
+        lo = d(ev["start"]) - timedelta(days=3)
+        hi = d(ev["end"]) + timedelta(days=2)
+        ev["flights"] = []
+        for i, f in enumerate(trip_flights):
+            if i not in used and lo <= d(f["depart"]) <= hi:
+                ev["flights"].append(f)
+                used.add(i)
+    return events, [f for i, f in enumerate(trip_flights) if i not in used]

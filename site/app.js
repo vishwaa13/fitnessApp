@@ -258,19 +258,35 @@
     if (n === 1) return "Tomorrow";
     return n < 21 ? `In ${n} days` : `In ${Math.round(n / 7)} weeks`;
   }
+  function flightRows(list) {
+    return h("div", { class: "rows flights" }, list.map(f => {
+      const dep = new Date(f.depart), arr = new Date(f.arrive);
+      const t = x => x.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const overnight = arr.toDateString() !== dep.toDateString();
+      return h("div", { class: "row" },
+        h("div", null,
+          h("span", { class: "row-title" }, "✈ " + (f.to ? "To " + f.to : f.title)),
+          h("span", { class: "muted small" }, " · " + day(f.depart.slice(0, 10)))),
+        h("span", { class: "num" }, `${t(dep)} → ${t(arr)}${overnight ? " +1" : ""}`),
+        h("p", { class: "row-sub" }, [f.code, f.from ? "from " + f.from : null].filter(Boolean).join(" · ")));
+    }));
+  }
   function renderEvents(panel) {
     const evs = DATA.events || [];
+    const travel = DATA.travel || [];
+    const travelCard = travel.length ? h("section", { class: "card" }, h("h2", null, "Other flights"), flightRows(travel),
+      h("p", { class: "small muted" }, "Times are shown in your phone's time zone.")) : null;
     if (!evs.length) {
       const cal = (DATA.sources || {}).calendar || "";
       panel.append(h("section", { class: "card" }, h("h2", null, "No upcoming events"),
         h("p", { class: "note" }, cal.startsWith("ok")
           ? "Nothing in the next year matches your event words (tryouts, Pesca, Disco, EBUCC, hat…). Add more words under events.keywords in config.yml."
-          : "Events come from your Google Calendar, which isn't connected yet. Fix the calendar connection (see the footer for the error), then the next run fills this tab.")));
+          : "Events come from your Google Calendar, which isn't connected yet. Fix the calendar connection (see the footer for the error), then the next run fills this tab.")), travelCard);
       return;
     }
     panel.append(h("div", { class: "stack" },
       h("p", { class: "note" }, "Future frisbee events from your calendar. Put the venue or town in a calendar entry's location field and it shows here. Hard sessions are never moved onto these days or the day before."),
-      h("div", { class: "grid2" }, evs.map(eventCard))));
+      h("div", { class: "grid2" }, evs.map(eventCard)), travelCard));
   }
   function eventCard(e) {
     const i = e.info;
@@ -294,7 +310,9 @@
         : e.calendar_location ? h("p", { class: "event-place" }, e.calendar_location)
         : h("p", { class: "note muted" }, e.source === "config"
           ? "From config.yml. Add it to your calendar with a location to show where it is."
-          : "No location yet. Add the venue or town to this calendar entry's location field."));
+          : "No location yet. Add the venue or town to this calendar entry's location field."),
+      e.flights && e.flights.length ? [h("h3", null, "Flights"), flightRows(e.flights),
+        h("p", { class: "small muted" }, "Times are shown in your phone's time zone.")] : null);
   }
 
   // ---------- Recovery ----------

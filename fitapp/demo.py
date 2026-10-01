@@ -181,11 +181,14 @@ def _upcoming(events: list[dict], cfg: dict, today: date) -> list[dict]:
         name, city, country, venue, lat, lon, surface, division = DEMO_PLACES[title]
         return {"full_name": name, "city": city, "country": country, "venue": venue, "latitude": lat,
                 "longitude": lon, "surface": surface, "division": division, "website": None,
-                "summary": "Demo entry. With ANTHROPIC_API_KEY set, this comes from a web search for your event.",
+                "summary": "Demo entry. With the free GEMINI_API_CODE secret set, this comes from a Google search for your event.",
                 "confidence": "medium"}
 
+    from .events import attach_flights, flights
+
     chosen = select(events, list(cfg["events"]["keywords"]) + ["championships"], cfg["tournaments"]["manual"], today)
-    return enrich(chosen, {}, fake_lookup, HOME, today)
+    upcoming, _ = attach_flights(enrich(chosen, {}, fake_lookup, HOME, today), flights(events, today))
+    return upcoming
 
 
 def _calendar(today: date, tz: ZoneInfo) -> list[dict]:
@@ -206,6 +209,8 @@ def _calendar(today: date, tz: ZoneInfo) -> list[dict]:
          "end": today + timedelta(days=26), "all_day": True, "role": None},
         {"id": "demo8", "title": "Club championships", "start": today + timedelta(days=61),
          "end": today + timedelta(days=65), "all_day": True, "role": None},
+        {**ev(9, "Flight to Lisbon (TP 753)", 60, 7, 255), "location": "Milan MXP"},
+        {**ev(10, "Flight to Milan (TP 828)", 65, 19, 170), "location": "Lisbon LIS"},
     ]
 
 

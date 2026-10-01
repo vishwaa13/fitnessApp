@@ -99,3 +99,85 @@ def test_lookup_returns_none_on_refusal_or_no_tool_call():
     assert finder.lookup("x", TODAY, TODAY) is None
     finder, _ = lookup_with([NS(stop_reason="end_turn", content=[NS(type="text", text="no idea")])])
     assert finder.lookup("x", TODAY, TODAY) is None
+
+
+def timed(title, day, hour, minutes, location=""):
+    from zoneinfo import ZoneInfo
+    s = datetime(2026, 10, day, hour, tzinfo=ZoneInfo("Europe/Copenhagen"))
+    return {"title": title, "start": s, "end": s + timedelta(minutes=minutes), "all_day": False,
+            "role": None, "location": location}
+
+
+def test_flights_merge_gmail_duplicates_and_attach_to_events():
+    from fitapp.events import attach_flights, flights
+    cal_events = [
+        timed("Flight to Palma (W6 1327)", 8, 15, 195, "Warsaw WAW"),
+        timed("Flight to Palma, Majorca (W6 1327)", 8, 15, 195, "Warsaw WAW"),
+        timed("Flight to Warsaw WAW 08:45 (08:45 AM) CPH Copenhagen (D8 5610)", 12, 7, 180, "Palma PMI"),
+        timed("Flight to Copenhagen (D8 5610)", 12, 7, 180, "Palma PMI"),
+        timed("Flight to Porto (D8 3612)", 15, 7, 210, "Copenhagen CPH"),
+        timed("Flight to Rome (AZ 1)", 28, 9, 120),
+        timed("Tempo run", 9, 18, 60),
+    ]
+    fl = flights(cal_events, TODAY)
+    assert [(f["code"], f["to"]) for f in fl] == [("W61327", "Palma"), ("D85610", "Copenhagen"),
+                                                 ("D83612", "Porto"), ("AZ1", "Rome")]
+    evs = [{"title": "Pesa disc", "start": "2026-10-08", "end": "2026-10-12"},
+           {"title": "EBUCC", "start": "2026-10-15", "end": "2026-10-18"}]
+    evs, other = attach_flights(evs, fl)
+    assert [f["code"] for f in evs[0]["flights"]] == ["W61327", "D85610"]
+    assert [f["code"] for f in evs[1]["flights"]] == ["D83612"]
+    assert [f["code"] for f in other] == ["AZ1"]
+
+
+def test_select_matches_pesa_disc_title():
+    from fitapp.config import load_config
+    kw = load_config()["events"]["keywords"]
+    out = select([cal("Pesa disc - Spain frisbee", 7, 5), cal("Frisbee practice", 3)], kw, [], TODAY)
+    assert [e["title"] for e in out] == ["Pesa disc - Spain frisbee"]
+
+
+def test_gemini_reply_parsing_and_request(monkeypatch):
+    from fitapp.sources import gemini_lookup as gl
+    reply = '```json\n{"full_name": "Copa Pescadisco", "city": "Port d\'Alcudia", "country": "Spain", ' \
+            '"venue": null, "latitude": 39.84, "longitude": 3.13, "surface": "beach", "division": "mixed", ' \
+            '"website": "javascript:alert(1)", "summary": "Beach tournament.", "confidence": "high"}\n```'
+    parsed = gl.parse_reply(reply)
+    assert parsed["full_name"] == "Copa Pescadisco" and parsed["surface"] == "beach"
+    assert parsed["website"] is None          # only http(s) links survive
+    assert gl.parse_reply("I could not find it") is None
+
+    sent = {}
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": reply}]}}]}
+
+    def fake_post(url, json, timeout, headers):
+        sent.update(url=url, body=json, headers=headers)
+        return Resp()
+
+    monkeypatch.setattr(gl.requests, "post", fake_post)
+    info = gl.GeminiLookup(api_key="k").lookup("Pesa disc", date(2026, 10, 8), date(2026, 10, 12), None)
+    assert info["city"] == "Port d'Alcudia"
+    assert "gemini-2.5-flash:generateContent" in sent["url"]
+    assert sent["body"]["tools"] == [{"google_search": {}}]
+    assert sent["headers"]["x-goog-api-key"] == "k"
+    assert "Pesa disc" in sent["body"]["contents"][0]["parts"][0]["text"]
+
+
+def test_gemini_http_error_raises(monkeypatch):
+    import pytest
+    from fitapp.sources import gemini_lookup as gl
+
+    class Resp:
+        status_code = 429
+
+        def json(self):
+            return {"error": {"message": "Resource has been exhausted"}}
+
+    monkeypatch.setattr(gl.requests, "post", lambda *a, **k: Resp())
+    with pytest.raises(gl.GeminiError):
+        gl.GeminiLookup(api_key="k").lookup("x", TODAY, TODAY)

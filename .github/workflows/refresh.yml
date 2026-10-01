@@ -2,7 +2,7 @@ name: Refresh dashboard
 
 on:
   schedule:
-    # Hourly through the morning (06:20–12:20 Rome in summer, 05:20–11:20 in winter),
+    # Hourly through the morning (06:20–12:20 Copenhagen in summer, 05:20–11:20 in winter),
     # so the first run after your watch syncs makes the readiness call.
     - cron: "20 4-10 * * *"
     # Afternoon and evening: picks up gym sessions for next targets and activity notes.
@@ -63,6 +63,7 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_CODE: ${{ secrets.GEMINI_API_CODE }}
         run: python -m fitapp --out site/data ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Save state for the next run

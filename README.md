@@ -10,7 +10,7 @@ data every morning and published on GitHub Pages. It has five parts:
 | **Progressive overload builder** | Reads your Google Keep note **gym logs**, applies double progression to every lift, and uploads the next session to Garmin as a strength workout with the weight and reps for each set, so the watch tells you what to hit. It also writes the lifts you actually did into the matching Garmin activity's description. |
 | **Recovery correlations** | Plots HRV and sleep against alcohol, late training, travel, tournament days and big training days, then measures each one's effect on your next-morning numbers with a confidence range. |
 | **Injury early-warning** | Scans for the patterns that come before strains: a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, and HRV stuck under baseline. Add your glute strain date and it shows what the week before it looked like and warns when today matches. |
-| **Upcoming events** | Finds future frisbee events in your calendar (tryouts, Pesca Disco, EBUCC, Gurls Hat…), looks each one up once with Claude and web search to find the venue, city, surface and event page, and lists them with a countdown and distance from home. |
+| **Upcoming events** | Lists future frisbee events from your calendar (tryouts, Pesca Disco, EBUCC, Gurls Hat…) with a countdown, the venue, and the flights around each one. Optionally looks up each event's venue and surface for free with Gemini and Google Search. |
 
 Until you add your secrets the site shows **demo data** with a banner, so you
 can see how it works first.
@@ -88,15 +88,20 @@ the virtual environment from step 3, then save the secrets `GOOGLE_EMAIL` and
 `GOOGLE_KEEP_MASTER_TOKEN`. The master token is powerful, so keep it only in
 GitHub secrets.
 
-### 5b. Claude (for the Events tab)
-Create an API key at [platform.claude.com](https://platform.claude.com/) → **API keys** and save it as the
-secret `ANTHROPIC_API_KEY`. Each event is looked up once (and refreshed monthly) with Claude Opus 5.5 and
-web search, so it costs a few cents per event. Only the event's title, dates and calendar location field
-are sent. Without the key the tab still lists your events, just without the details.
+### 5b. Gemini, free (optional, for the Events tab)
+The Events tab lists your upcoming frisbee events from the calendar, with the flights around each one
+(Gmail adds flight bookings to your calendar automatically). To also look up each event's venue, city and
+surface with Google Search:
 
-Events are calendar entries whose title contains a word from `events.keywords` in `config.yml`. If a
-lookup picks the wrong event, put the place in the calendar entry's location field; the next lookup
-uses it.
+1. Go to [Google AI Studio](https://aistudio.google.com/) → **Get API key** → **Create API key**. No card needed.
+2. Save it as the secret `GEMINI_API_CODE`.
+
+It uses Gemini 2.5 Flash, whose free tier includes Google Search (newer Gemini models don't include it for
+free). Each event is looked up once and refreshed monthly, a handful of requests a month. Only the event's
+title, dates and calendar location are sent; Google may use free-tier requests to improve its products.
+Without the key, the tab shows whatever you type in the calendar entry's location field.
+
+Events are calendar entries whose title contains a word from `events.keywords` in `config.yml`.
 
 ### 6. Make it yours
 Edit `config.yml`:
