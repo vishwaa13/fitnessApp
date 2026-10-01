@@ -170,3 +170,21 @@ def test_garmin_normalisers():
     assert (row["hrv"], row["hrv_low"], row["sleep_score"], row["sleep_hours"], row["readiness"], row["rhr"]) == (48, 54, 61, 6.25, 31, 52)
     assert row["readiness_feedback"] == "Low HRV"
     assert lifestyle_tags({"dailyLogs": [{"name": "Alcohol", "status": "YES"}, {"name": "Caffeine", "status": "NO"}]}) == ["alcohol"]
+
+
+def test_calendar_errors_are_explained_without_the_calendar_id():
+    import httplib2
+    from googleapiclient.errors import HttpError
+
+    from fitapp.sources.gcal import describe_error
+
+    def err(status, reason, message):
+        body = json.dumps({"error": {"code": status, "message": message,
+                                     "errors": [{"reason": reason, "message": message}]}}).encode()
+        return HttpError(httplib2.Response({"status": status}), body)
+
+    nf = describe_error(err(404, "notFound", "Not Found: someone@gmail.com"))
+    assert nf.startswith("HTTP 404 notFound") and "share the calendar" in nf and "@" not in nf
+    off = describe_error(err(403, "accessNotConfigured", "Google Calendar API has not been used in project 12"))
+    assert "turn on the Google Calendar API" in off
+    assert "not valid JSON" in describe_error(json.JSONDecodeError("x", "{", 0))

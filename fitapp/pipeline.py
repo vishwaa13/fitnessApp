@@ -205,8 +205,10 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
             events = cal.events(today, int(cfg["readiness"]["look_ahead_days"]) + 1)
             sources["calendar"] = "ok"
         except Exception as exc:  # noqa: BLE001
-            log.error("Calendar failed: %s", type(exc).__name__)
-            sources["calendar"] = f"error: {type(exc).__name__}"
+            from .sources.gcal import describe_error
+            reason = describe_error(exc)
+            log.error("Calendar failed: %s", reason)
+            sources["calendar"] = f"error: {reason}"
     else:
         sources["calendar"] = "not configured"
 

@@ -10,11 +10,54 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 ROLE_KEY = "fitnessAppRole"
+
+_HINTS = {
+    "accessNotConfigured": "turn on the Google Calendar API for the service account's Cloud project",
+    "SERVICE_DISABLED": "turn on the Google Calendar API for the service account's Cloud project",
+    "notFound": "share the calendar with the service account e-mail, and check GOOGLE_CALENDAR_ID",
+    "forbidden": "give the service account 'Make changes to events' on the calendar",
+    "requiredAccessLevel": "give the service account 'Make changes to events' on the calendar",
+    "insufficientPermissions": "give the service account 'Make changes to events' on the calendar",
+}
+
+
+def describe_error(exc: Exception) -> str:
+    """A log-safe one-liner: HTTP status, Google's reason code and a fix hint.
+
+    E-mail addresses (the calendar ID) are masked; nothing else personal is
+    in Calendar error payloads."""
+    from googleapiclient.errors import HttpError
+
+    if isinstance(exc, json.JSONDecodeError):
+        return "GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON (paste the whole key file)"
+    if not isinstance(exc, HttpError):
+        return type(exc).__name__
+    status = getattr(exc.resp, "status", "?")
+    reason, message = "", ""
+    try:
+        err = json.loads(exc.content.decode("utf-8")).get("error", {})
+        message = err.get("message", "")
+        details = err.get("errors") or []
+        reason = (details[0].get("reason") if details else "") or ""
+        for d in err.get("details") or []:
+            reason = d.get("reason") or reason
+    except Exception:  # noqa: BLE001
+        pass
+    message = re.sub(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", "<calendar>", message)[:160]
+    hint = _HINTS.get(reason) or ("share the calendar with the service account e-mail, and check GOOGLE_CALENDAR_ID"
+                                   if status == 404 else "")
+    out = f"HTTP {status} {reason}".strip()
+    if message:
+        out += f" ({message})"
+    if hint:
+        out += f". Fix: {hint}"
+    return out
 
 
 class CalendarSource:
