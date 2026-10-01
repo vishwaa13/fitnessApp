@@ -5,7 +5,8 @@
 2. When it shows "I agree", open developer tools -> Application/Storage ->
    Cookies -> accounts.google.com and copy the value of the `oauth_token`
    cookie (starts with "oauth2_4/"). It is single-use and expires in minutes.
-3. Run:  pip install gkeepapi==0.17.1 && python scripts/keep_token.py
+3. Inside the virtual environment from README step 3 (source .venv/bin/activate):
+   pip install gkeepapi==0.17.1 && python scripts/keep_token.py
 
 Save the printed token as the GOOGLE_KEEP_MASTER_TOKEN secret and your
 address as GOOGLE_EMAIL. The token can read your whole Google account, so

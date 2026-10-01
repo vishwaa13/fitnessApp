@@ -1,5 +1,6 @@
 """Log in to Garmin once on your own computer and print tokens for GitHub.
 
+    python3 -m venv .venv && source .venv/bin/activate
     pip install garminconnect==0.3.2
     python scripts/garmin_login.py
 

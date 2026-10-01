@@ -44,12 +44,19 @@ Your dashboard will be at `https://<your-username>.github.io/fitnessApp/`.
   is the only thing protecting your health data on a public URL.
 
 ### 3. Garmin
-On your own computer (Garmin may ask for an MFA code, which a robot can't answer):
+On your own computer (Garmin may ask for an MFA code, which a robot can't answer),
+from the `fitnessApp` folder. The scripts run in a small virtual environment,
+because Homebrew's Python on macOS refuses system-wide `pip install`:
 
 ```bash
-pip install garminconnect==0.3.2
+python3 -m venv .venv
+source .venv/bin/activate
+pip install garminconnect==0.3.2 gkeepapi==0.17.1
 python scripts/garmin_login.py
 ```
+
+In a new terminal window, run `source .venv/bin/activate` again before using
+the scripts.
 
 Save the printed line as the secret `GARMIN_TOKENS`. Each run refreshes the
 tokens and keeps them in the encrypted cache. If they ever expire, run the
@@ -75,7 +82,8 @@ started yet. It acts once per morning, and if the new day turns out red too, the
 ### 5. Google Keep (gym log and recovery tags)
 Keep has no official API for personal accounts, so this uses
 [gkeepapi](https://github.com/kiwiz/gkeepapi). Follow the steps at the top of
-`scripts/keep_token.py`, then save the secrets `GOOGLE_EMAIL` and
+`scripts/keep_token.py` and run it with `python scripts/keep_token.py` inside
+the virtual environment from step 3, then save the secrets `GOOGLE_EMAIL` and
 `GOOGLE_KEEP_MASTER_TOKEN`. The master token is powerful, so keep it only in
 GitHub secrets.
 
@@ -127,7 +135,7 @@ travel and tournament days are detected from your activities.
 ## Run it locally
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest
 python -m fitapp --demo && python -m http.server -d site 8000      # demo at http://localhost:8000
