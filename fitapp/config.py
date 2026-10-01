@@ -57,7 +57,7 @@ DEFAULTS: dict[str, Any] = {
     "events": {
         "keywords": ["tryout", "tryouts", "tournament", "hat", "championship"],
         "look_ahead_days": 365,
-        "gemini_model": "gemini-2.5-flash",
+        "gemini_models": ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"],
     },
     "recovery": {
         "keep_tags_note_title": "recovery tags",

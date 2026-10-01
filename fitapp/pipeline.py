@@ -232,7 +232,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     chosen = select(horizon, cfg["events"]["keywords"], cfg["tournaments"].get("manual"), today)
     # Free Gemini (GEMINI_API_CODE) first; Claude only if its key is set instead.
     finder = None
-    for name, candidate in (("gemini", GeminiLookup(model=cfg["events"].get("gemini_model"))),
+    for name, candidate in (("gemini", GeminiLookup(models=cfg["events"].get("gemini_models"))),
                             ("claude", EventLookup())):
         if candidate.configured:
             finder = candidate

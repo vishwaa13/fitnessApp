@@ -1,10 +1,10 @@
 """Find out where a calendar event is, using Google's Gemini API with Google Search.
 
 Free option: an API key from Google AI Studio (no card) in the GEMINI_API_CODE
-secret. Gemini 2.5 Flash's free tier includes Google Search grounding, which
-this needs; the newest Gemini models don't, so the model is pinned in config.
-Free-tier requests may be used by Google to improve its products, so only the
-event title, dates and calendar location are sent.
+secret. Which models offer free Google Search grounding changes often, so a
+short list is tried in order and the first one that answers is kept for the
+rest of the run. Free-tier requests may be used by Google to improve its
+products, so only the event title, dates and calendar location are sent.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import requests
 log = logging.getLogger(__name__)
 
 API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
 SURFACES = {"beach", "grass", "turf", "indoor", "unknown"}
 CONFIDENCE = {"high", "medium", "low"}
 
@@ -91,13 +91,19 @@ def parse_reply(text: str) -> dict | None:
 
 
 class GeminiLookup:
-    def __init__(self, api_key: str | None = None, model: str | None = None):
+    def __init__(self, api_key: str | None = None, models: list[str] | str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_CODE") or os.getenv("GEMINI_API_KEY")
-        self.model = model or DEFAULT_MODEL
+        if isinstance(models, str):
+            models = [models]
+        self.models = list(models or DEFAULT_MODELS)
 
     @property
     def configured(self) -> bool:
         return bool(self.api_key)
+
+    def _call(self, model: str, body: dict) -> requests.Response:
+        return requests.post(API.format(model=model), json=body, timeout=90,
+                             headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"})
 
     def lookup(self, title: str, start: date, end: date, calendar_location: str | None = None) -> dict | None:
         body: dict[str, Any] = {
@@ -106,16 +112,24 @@ class GeminiLookup:
             "tools": [{"google_search": {}}],
             "generationConfig": {"temperature": 0.2},
         }
-        resp = requests.post(API.format(model=self.model), json=body, timeout=90,
-                             headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"})
-        if resp.status_code != 200:
+        last_status = None
+        for model in list(self.models):
+            resp = self._call(model, body)
+            if resp.status_code == 200:
+                self.models = [model] + [m for m in self.models if m != model]  # keep the one that works first
+                return self._answer(resp.json())
             try:
                 message = resp.json().get("error", {}).get("message", "")[:160]
             except ValueError:
                 message = ""
-            log.error("Gemini HTTP %s: %s", resp.status_code, message)
-            raise GeminiError(f"HTTP {resp.status_code}")
-        data = resp.json()
+            log.error("Gemini %s HTTP %s: %s", model, resp.status_code, message)
+            last_status = resp.status_code
+            if resp.status_code in (401, 403) and "api key" in message.lower() or "API key not valid" in message:
+                break  # a bad key fails on every model
+        raise GeminiError(f"HTTP {last_status}")
+
+    @staticmethod
+    def _answer(data: dict) -> dict | None:
         candidates = data.get("candidates") or []
         if not candidates:
             log.warning("Gemini returned no answer (%s)", (data.get("promptFeedback") or {}).get("blockReason"))

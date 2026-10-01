@@ -163,7 +163,7 @@ def test_gemini_reply_parsing_and_request(monkeypatch):
     monkeypatch.setattr(gl.requests, "post", fake_post)
     info = gl.GeminiLookup(api_key="k").lookup("Pesa disc", date(2026, 10, 8), date(2026, 10, 12), None)
     assert info["city"] == "Port d'Alcudia"
-    assert "gemini-2.5-flash:generateContent" in sent["url"]
+    assert "gemini-3.8-flash:generateContent" in sent["url"]
     assert sent["body"]["tools"] == [{"google_search": {}}]
     assert sent["headers"]["x-goog-api-key"] == "k"
     assert "Pesa disc" in sent["body"]["contents"][0]["parts"][0]["text"]
@@ -182,3 +182,47 @@ def test_gemini_http_error_raises(monkeypatch):
     monkeypatch.setattr(gl.requests, "post", lambda *a, **k: Resp())
     with pytest.raises(gl.GeminiError):
         gl.GeminiLookup(api_key="k").lookup("x", TODAY, TODAY)
+
+
+def test_gemini_falls_back_to_next_model(monkeypatch):
+    from fitapp.sources import gemini_lookup as gl
+    calls = []
+
+    class Gone:
+        status_code = 404
+
+        def json(self):
+            return {"error": {"message": "This model is no longer available to new users"}}
+
+    class Ok:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": '{"full_name": "EBUCC 2026", "confidence": "high"}'}]}}]}
+
+    def fake_post(url, json, timeout, headers):
+        calls.append(url.split("/models/")[1].split(":")[0])
+        return Gone() if len(calls) == 1 else Ok()
+
+    monkeypatch.setattr(gl.requests, "post", fake_post)
+    finder = gl.GeminiLookup(api_key="k", models=["old-model", "new-model"])
+    assert finder.lookup("EBUCC", TODAY, TODAY)["full_name"] == "EBUCC 2026"
+    finder.lookup("EBUCC", TODAY, TODAY)
+    assert calls == ["old-model", "new-model", "new-model"]   # remembers the one that worked
+
+
+def test_gemini_bad_key_stops_immediately(monkeypatch):
+    import pytest
+    from fitapp.sources import gemini_lookup as gl
+    calls = []
+
+    class BadKey:
+        status_code = 400
+
+        def json(self):
+            return {"error": {"message": "API key not valid. Please pass a valid API key."}}
+
+    monkeypatch.setattr(gl.requests, "post", lambda url, **k: calls.append(url) or BadKey())
+    with pytest.raises(gl.GeminiError):
+        gl.GeminiLookup(api_key="k", models=["a", "b", "c"]).lookup("x", TODAY, TODAY)
+    assert len(calls) == 1

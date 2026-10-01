@@ -96,8 +96,9 @@ surface with Google Search:
 1. Go to [Google AI Studio](https://aistudio.google.com/) → **Get API key** → **Create API key**. No card needed.
 2. Save it as the secret `GEMINI_API_CODE`.
 
-It uses Gemini 2.5 Flash, whose free tier includes Google Search (newer Gemini models don't include it for
-free). Each event is looked up once and refreshed monthly, a handful of requests a month. Only the event's
+It tries a short list of Gemini Flash models (`events.gemini_models` in `config.yml`) and uses the first
+one your free key can run with Google Search. Each event is looked up once and refreshed monthly, a
+handful of requests a month. Only the event's
 title, dates and calendar location are sent; Google may use free-tier requests to improve its products.
 Without the key, the tab shows whatever you type in the calendar entry's location field.
 

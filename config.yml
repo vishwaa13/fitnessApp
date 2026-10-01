@@ -80,7 +80,8 @@ tournaments:
 events:
   keywords: [tryout, tryouts, pesca, pesa, pescadisco, disco, ebucc, hat, burla, frisbee, tournament, championship, championships]
   look_ahead_days: 365
-  gemini_model: gemini-2.5-flash   # its free tier includes Google Search; newer models' free tiers don't
+  # Tried in order; the first that answers with Google Search on your free key is used.
+  gemini_models: [gemini-3.8-flash, gemini-3.5-flash, gemini-3.1-flash-lite, gemini-2.5-flash]
 
 # ---------------------------------------------------------------------------
 # 3. Progressive overload workout builder
