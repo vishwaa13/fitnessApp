@@ -1,0 +1,9 @@
+[project]
+name = "fitapp"
+version = "0.1.0"
+description = "Morning readiness, tournament reports, strength progression and recovery analytics from Garmin data"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
