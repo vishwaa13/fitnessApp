@@ -5,7 +5,7 @@
   const C = window.Charts;
   const app = document.getElementById("app");
   const PASS_KEY = "morningcheck.pass";
-  const TABS = [["today", "Today"], ["recovery", "Recovery"], ["tournaments", "Tournaments"], ["strength", "Strength"], ["load", "Load & injury"]];
+  const TABS = [["today", "Today"], ["events", "Events"], ["recovery", "Recovery"], ["tournaments", "Tournaments"], ["strength", "Strength"], ["load", "Load & injury"]];
   let DATA = null;
   let recRange = 90;
   let recMetric = "hrv";
@@ -142,7 +142,7 @@
     const tab = currentTab();
     document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", String(TABS[i][0] === tab)));
     panel.replaceChildren();
-    ({ today: renderToday, recovery: renderRecovery, tournaments: renderTournaments, strength: renderStrength, load: renderLoad })[tab](panel);
+    ({ today: renderToday, events: renderEvents, recovery: renderRecovery, tournaments: renderTournaments, strength: renderStrength, load: renderLoad })[tab](panel);
   }
   const go = id => h("a", { href: "#" + id }, "Open");
 
@@ -249,6 +249,50 @@
     if (t.rebound_status === "pending") return "HRV hasn't rebounded yet.";
     if (t.rebound_status === "not_within_14d") return "HRV stayed below baseline for two weeks.";
     return "No HRV data around this event.";
+  }
+
+  // ---------- Events ----------
+  const SURFACE = { beach: "Beach", grass: "Grass", turf: "Turf", indoor: "Indoor" };
+  function countdown(n) {
+    if (n <= 0) return "Now";
+    if (n === 1) return "Tomorrow";
+    return n < 21 ? `In ${n} days` : `In ${Math.round(n / 7)} weeks`;
+  }
+  function renderEvents(panel) {
+    const evs = DATA.events || [];
+    if (!evs.length) {
+      const cal = (DATA.sources || {}).calendar || "";
+      panel.append(h("section", { class: "card" }, h("h2", null, "No upcoming events"),
+        h("p", { class: "note" }, cal.startsWith("ok")
+          ? "Nothing in the next year matches your event words (tryouts, Pesca, Disco, EBUCC, hat…). Add more words under events.keywords in config.yml."
+          : "Events come from your Google Calendar, which isn't connected yet. Fix the calendar connection (see the footer for the error), then the next run fills this tab.")));
+      return;
+    }
+    panel.append(h("div", { class: "stack" },
+      h("p", { class: "note" }, "Future frisbee events from your calendar. Where each one is was looked up by Claude with a web search, so check the official page before booking travel. Hard sessions are never moved onto these days or the day before."),
+      h("div", { class: "grid2" }, evs.map(eventCard))));
+  }
+  function eventCard(e) {
+    const i = e.info;
+    const dates = day(e.start) + (e.days > 1 ? " – " + day(e.end) : "");
+    const place = i ? [i.venue, [i.city, i.country].filter(Boolean).join(", ")].filter(Boolean).join(" · ") : null;
+    const facts = i ? [i.surface && i.surface !== "unknown" ? SURFACE[i.surface] : null, i.division,
+      e.distance_km != null ? `${e.distance_km.toLocaleString()} km from home` : null].filter(Boolean) : [];
+    return h("section", { class: "card event" },
+      h("div", { class: "card-head" },
+        h("div", null, h("h2", null, e.title), h("span", { class: "small muted" }, dates)),
+        chip(e.days_until <= 7 ? "amber" : "plain accent", countdown(e.days_until))),
+      i ? h("div", { class: "event-body" },
+        i.full_name && i.full_name.toLowerCase() !== e.title.toLowerCase() ? h("p", { class: "row-title" }, i.full_name) : null,
+        place ? h("p", { class: "event-place" }, place) : h("p", { class: "muted" }, "Location not confirmed"),
+        facts.length ? h("p", { class: "small muted" }, facts.join(" · ")) : null,
+        i.summary ? h("p", { class: "note" }, i.summary) : null,
+        h("p", { class: "small" },
+          i.website && /^https?:\/\//.test(i.website) ? h("a", { href: i.website, target: "_blank", rel: "noopener noreferrer" }, "Event page") : null,
+          i.website ? " · " : null,
+          h("span", { class: "muted" }, `Found with web search · ${i.confidence} confidence`)))
+        : h("p", { class: "note" }, e.calendar_location ? "Calendar location: " + e.calendar_location + ". " : "",
+          e.lookup_status === "not found" ? "Couldn't find this event online. Add the place to the calendar entry's location field and it will be used next time." : `Details: ${e.lookup_status}.`));
   }
 
   // ---------- Recovery ----------

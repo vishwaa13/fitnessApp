@@ -54,6 +54,10 @@ DEFAULTS: dict[str, Any] = {
         "rules": [],
         "garmin_exercise_overrides": {},
     },
+    "events": {
+        "keywords": ["tryout", "tryouts", "tournament", "hat", "championship"],
+        "look_ahead_days": 365,
+    },
     "recovery": {
         "keep_tags_note_title": "recovery tags",
         "late_training_hour": 20,

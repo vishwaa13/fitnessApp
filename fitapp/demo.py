@@ -34,7 +34,7 @@ def build(cfg: dict, now: datetime | None = None) -> dict:
     today = now.date()
     rng = random.Random(42)
     cfg = copy.deepcopy(cfg)
-    cfg["tournaments"]["manual"] = [{"name": "Team Denmark tryouts", "start": today + timedelta(days=2),
+    cfg["tournaments"]["manual"] = [{"name": "National team tryouts", "start": today + timedelta(days=2),
                                      "end": today + timedelta(days=3)}]
     cfg["injury"]["history"] = [{"date": today - timedelta(days=78), "label": "Glute strain"}]
 
@@ -150,8 +150,9 @@ def build(cfg: dict, now: datetime | None = None) -> dict:
                           if d >= today - timedelta(days=300))
 
     events = _calendar(today, tz)
+    upcoming = _upcoming(events, cfg, today)
     data = analyze(activities=acts, daily=daily, gym_text=_gym_log(today, rng), manual_tags=_tags(tags_text, today),
-                   cfg=cfg, now=now, calendar_events=events,
+                   cfg=cfg, now=now, calendar_events=events, upcoming_events=upcoming,
                    sources={"garmin": "demo", "keep": "demo", "calendar": "demo"})
     data["demo"] = True
     for t in data["overload"]["templates"]:
@@ -166,6 +167,27 @@ def _tags(text: str, today: date) -> dict:
     return parse_tags_note(text, today)
 
 
+DEMO_PLACES = {
+    "National team tryouts": ("National team tryouts 2026", "Odense", "Denmark", "Fruens Bøge sports park", 55.39, 10.39, "grass", "open"),
+    "Beach hat": ("Autumn Beach Hat", "Viareggio", "Italy", "Spiaggia della Lecciona", 43.87, 10.25, "beach", "hat (random teams)"),
+    "Club championships": ("European club championships", "Lisbon", "Portugal", None, 38.72, -9.14, "grass", "mixed"),
+}
+
+
+def _upcoming(events: list[dict], cfg: dict, today: date) -> list[dict]:
+    from .events import enrich, select
+
+    def fake_lookup(title, start, end, location):
+        name, city, country, venue, lat, lon, surface, division = DEMO_PLACES[title]
+        return {"full_name": name, "city": city, "country": country, "venue": venue, "latitude": lat,
+                "longitude": lon, "surface": surface, "division": division, "website": None,
+                "summary": "Demo entry. With ANTHROPIC_API_KEY set, this comes from a web search for your event.",
+                "confidence": "medium"}
+
+    chosen = select(events, list(cfg["events"]["keywords"]) + ["championships"], cfg["tournaments"]["manual"], today)
+    return enrich(chosen, {}, fake_lookup, HOME, today)
+
+
 def _calendar(today: date, tz: ZoneInfo) -> list[dict]:
     def ev(i, title, offset, hour, minutes=60):
         s = datetime.combine(today + timedelta(days=offset), time(hour), tz)
@@ -175,11 +197,15 @@ def _calendar(today: date, tz: ZoneInfo) -> list[dict]:
     return [
         ev(1, "Track intervals 6×800m", 0, 18),
         ev(2, "Gym – Lower A", 1, 7),
-        {"id": "demo3", "title": "Team Denmark tryouts", "start": tryouts_start,
+        {"id": "demo3", "title": "National team tryouts", "start": tryouts_start,
          "end": tryouts_start + timedelta(days=2), "all_day": True, "role": None},
         ev(4, "Tempo run 5 km", 4, 18),
         ev(5, "Easy run", 5, 9),
         ev(6, "Gym – Upper A", 6, 7),
+        {"id": "demo7", "title": "Beach hat", "start": today + timedelta(days=24),
+         "end": today + timedelta(days=26), "all_day": True, "role": None},
+        {"id": "demo8", "title": "Club championships", "start": today + timedelta(days=61),
+         "end": today + timedelta(days=65), "all_day": True, "role": None},
     ]
 
 

@@ -37,12 +37,14 @@ def resolve_max_hr(cfg: dict, activities: list[dict], profile_max: float | None 
     return float(max(observed, profile_max or 0)) or None
 
 
-def protected_days(cfg: dict) -> set[date]:
-    """Days of manually listed (usually upcoming) tournaments: never swap onto them."""
+def protected_days(cfg: dict, upcoming_events: list[dict] | None = None) -> set[date]:
+    """Days of upcoming events (config and calendar): never swap a hard session onto them."""
+    ranges = [(m["start"], m.get("end") or m["start"]) for m in cfg["tournaments"].get("manual") or []]
+    ranges += [(e["start"], e["end"]) for e in upcoming_events or []]
     days = set()
-    for m in cfg["tournaments"].get("manual") or []:
-        day = d(m["start"])
-        while day <= d(m.get("end") or m["start"]):
+    for start, end in ranges:
+        day = d(start)
+        while day <= d(end):
             days.add(day)
             day += timedelta(days=1)
     return days
@@ -63,7 +65,8 @@ def _jsonable(value: Any) -> Any:
 def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             manual_tags: dict[str, list[str]], cfg: dict, now: datetime,
             calendar_events: list[dict] | None, sources: dict[str, str],
-            profile_max_hr: float | None = None) -> dict[str, Any]:
+            profile_max_hr: float | None = None,
+            upcoming_events: list[dict] | None = None) -> dict[str, Any]:
     today = now.date()
     activities = sorted((dict(a) for a in activities), key=lambda a: a["start"])
     daily = sorted(daily, key=lambda r: r["date"])
@@ -102,7 +105,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
         v = readiness.assess(by_date.get(day), [r for r in daily if r["date"] < day], cfg["readiness"]["thresholds"])
         strip.append({"date": day, "status": v["status"]})
 
-    protected = protected_days(cfg)
+    protected = protected_days(cfg, upcoming_events)
     swaps: list[dict] = []
     week: list[dict] = []
     if calendar_events is not None:
@@ -133,6 +136,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
         "recovery": rec,
         "injury": inj,
         "recent_activities": recent,
+        "events": upcoming_events or [],
     })
 
 
@@ -212,8 +216,28 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     else:
         sources["calendar"] = "not configured"
 
+    # --- Upcoming events, located with Claude + web search ------------------------
+    from .events import enrich, select
+    from .sources.event_lookup import EventLookup
+
+    horizon: list[dict] = []
+    if events is not None:
+        try:
+            horizon = cal.events(today, int(cfg["events"]["look_ahead_days"]))
+        except Exception as exc:  # noqa: BLE001
+            from .sources.gcal import describe_error
+            log.error("Calendar (events) failed: %s", describe_error(exc))
+            horizon = events
+    chosen = select(horizon, cfg["events"]["keywords"], cfg["tournaments"].get("manual"), today)
+    finder = EventLookup()
+    sources["event_lookup"] = "ok" if finder.configured else "not configured"
+    upcoming = enrich(chosen, state.setdefault("event_info", {}),
+                      finder.lookup if finder.configured else None, detect_home(activities, cfg), today)
+    log.info("Events: %d upcoming", len(upcoming))
+
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
-                   cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max)
+                   cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
+                   upcoming_events=upcoming)
 
     # --- Act: calendar swaps ------------------------------------------------
     mode = cfg["readiness"]["mode"]
@@ -223,7 +247,8 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
         data["today"]["actions"] = done_today
     elif actions and mode == "apply" and not dry_run and events is not None:
         reason = "; ".join(f"{s['label']} {s['display']}" for s in data["today"]["signals"] if s["level"] == "red")
-        raw = readiness.plan_swaps(events, data["today"]["status"], cfg["readiness"], now, protected_days(cfg))
+        raw = readiness.plan_swaps(events, data["today"]["status"], cfg["readiness"], now,
+                                   protected_days(cfg, upcoming))
         for plan_item, shown in zip(raw, actions):
             try:
                 cal.apply_swap(plan_item, f"Readiness red ({reason})")

@@ -198,6 +198,10 @@ tbody tr.clickable:hover td { background: var(--surface-2); }
 .tt-head { color: var(--ink); font-weight: 700; }
 .tt-key { width: 12px; height: 3px; border-radius: 2px; flex: none; }
 
+/* Events */
+.event-body { display: grid; gap: 6px; }
+.event-place { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; }
+
 /* Strength */
 .lifts { display: grid; gap: 0; }
 .lift { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.1fr); gap: 4px 12px; padding-block: 10px; border-top: 1px solid var(--line); align-items: start; }

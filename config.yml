@@ -38,7 +38,7 @@ readiness:
                   hill, hills, fartlek, speed, heavy, strength, gym, lower, legs,
                   squat, deadlift, plyo, plyometrics]
   # Never moved, even on a red day.
-  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, race]
+  protected_keywords: [tournament, game, match, tryout, tryouts, burla, ebucc, hat, pesca, disco, race]
   # Replacement sessions, picked by the first group whose words match the title.
   light_versions:
     - match: [interval, intervals, tempo, threshold, track, vo2, sprint, sprints, hill, hills, fartlek, speed]
@@ -70,6 +70,15 @@ tournaments:
   #  - {name: "Pesca Disco Hat", start: YYYY-MM-DD, end: YYYY-MM-DD}
   #  - {name: "EBUCC", start: YYYY-MM-DD, end: YYYY-MM-DD}
   hrv_rebound_tolerance: 0.05   # "rebounded" = HRV back within 5% of the pre-event baseline
+
+# ---------------------------------------------------------------------------
+# Upcoming events tab: future calendar events whose title contains one of these
+# words. Each one is looked up once with Claude + web search (needs the
+# ANTHROPIC_API_KEY secret) to find where it is.
+# ---------------------------------------------------------------------------
+events:
+  keywords: [tryout, tryouts, pesca, disco, ebucc, hat, burla, tournament, championship, championships]
+  look_ahead_days: 365
 
 # ---------------------------------------------------------------------------
 # 3. Progressive overload workout builder
