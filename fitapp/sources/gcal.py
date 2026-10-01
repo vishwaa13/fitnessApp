@@ -108,7 +108,7 @@ class CalendarSource:
             role = ((it.get("extendedProperties") or {}).get("private") or {}).get(ROLE_KEY)
             out.append({"id": it["id"], "title": it.get("summary") or "", "start": s, "end": e,
                         "all_day": all_day, "role": role, "description": it.get("description") or "",
-                        "location": it.get("location") or ""})
+                        "location": it.get("location") or "", "type": it.get("eventType")})
         return out
 
     def _when(self, value: datetime | date, all_day: bool) -> dict:

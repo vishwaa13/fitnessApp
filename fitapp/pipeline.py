@@ -240,8 +240,11 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
             break
     upcoming = enrich(chosen, state.setdefault("event_info", {}),
                       finder.lookup if finder else None, detect_home(activities, cfg), today)
-    upcoming, other_flights = attach_flights(upcoming, flights(horizon, today))
-    log.info("Events: %d upcoming", len(upcoming))
+    trip_flights = flights(horizon, today)
+    upcoming, other_flights = attach_flights(upcoming, trip_flights)
+    log.info("Events: %d upcoming, %d flights (%d calendar entries read, %d created from Gmail)",
+             len(upcoming), len(trip_flights), len(horizon),
+             sum(1 for e in horizon if e.get("type") == "fromGmail"))
 
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
