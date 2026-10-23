@@ -8,6 +8,31 @@ from typing import Any
 
 import yaml
 
+# Lifts to back off when a gym-log note reports pain there (matched on the lift's name).
+PAIN_AFFECTS = {
+    "shoulder": ["bench", "press", "incline", "ohp", "dip", "push up", "lateral raise", "front raise", "fly",
+                 "pull up", "chin up", "pulldown", "vertical"],
+    "chest": ["bench", "press", "incline", "dip", "push up", "fly"],
+    "elbow": ["bench", "press", "dip", "push up", "bicep", "biceps", "hammer curl", "barbell curl", "extension",
+              "pull up", "chin up", "pulldown", "vertical", "row"],
+    "wrist": ["bench", "press", "dip", "push up", "bicep", "biceps", "hammer curl", "barbell curl", "clean"],
+    "knee": ["squat", "lunge", "split squat", "step up", "leg extension", "leg press", "jump", "clean"],
+    "hamstring": ["deadlift", "dl", "rdl", "nordic", "hamstring curl", "leg curl", "hip thrust", "clean",
+                  "good morning"],
+    "glute": ["hip thrust", "squat", "deadlift", "dl", "rdl", "lunge", "split squat", "step up"],
+    "lower back": ["deadlift", "dl", "rdl", "squat", "clean", "row", "good morning", "hip thrust"],
+    "back": ["deadlift", "dl", "rdl", "squat", "clean", "row", "good morning", "hip thrust"],
+    "hip": ["squat", "lunge", "split squat", "step up", "deadlift", "dl", "hip thrust"],
+    "hip flexor": ["leg raise", "dragon flag", "squat", "lunge", "split squat"],
+    "groin": ["squat", "lunge", "split squat", "sumo", "step up"],
+    "adductor": ["squat", "lunge", "split squat", "sumo", "step up"],
+    "calf": ["calf raise", "jump", "step up", "lunge", "split squat"],
+    "achilles": ["calf raise", "jump", "step up", "lunge", "split squat"],
+    "ankle": ["calf raise", "jump", "step up", "lunge", "split squat", "squat"],
+    "neck": ["shoulder press", "ohp", "shrug", "deadlift"],
+    "trap": ["shoulder press", "ohp", "shrug", "deadlift"],
+}
+
 DEFAULTS: dict[str, Any] = {
     "timezone": "Europe/Rome",
     "athlete": {"max_hr": None, "home": None},
@@ -45,6 +70,8 @@ DEFAULTS: dict[str, Any] = {
         "keep_note_title": "gym logs",
         "date_order": "DMY",
         "weight_unit": "kg",
+        "set_format": "auto",
+        "aliases": {},
         "upload_to_garmin": True,
         "schedule_on_calendar": True,
         "write_activity_descriptions": True,
@@ -71,6 +98,8 @@ DEFAULTS: dict[str, Any] = {
         "acwr_caution": 1.3,
         "acwr_high": 1.5,
         "monotony_caution": 2.0,
+        "pain_hold_days": 14,
+        "pain_affects": PAIN_AFFECTS,
         "history": [],
     },
 }

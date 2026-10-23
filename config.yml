@@ -90,6 +90,14 @@ overload:
   keep_note_title: gym logs
   date_order: DMY         # how to read 03/10 in your notes: DMY or MDY
   weight_unit: kg
+  set_format: weight_x_reps     # "60 X 8" is 60 kg for 8 reps, "0 X 5" is bodyweight
+  # Other names you've logged the same lift under, so their history joins up.
+  # Word order and plurals are already ignored ("Vertical pull cable" = "Cable vertical pull").
+  aliases:
+    Bench press: [Barbell bench press]
+    Nordic curls: [Nordics]
+    Split squats: [Bulgarian split squat]
+    Ab crunches: [Weighted crunches, Cable crunches]
   upload_to_garmin: true
   schedule_on_calendar: true    # put "up next" on the Garmin calendar on your next gym day
   write_activity_descriptions: true
@@ -125,6 +133,10 @@ injury:
   acwr_caution: 1.3
   acwr_high: 1.5
   monotony_caution: 2.0
+  # A gym-log line that mentions pain ("Left shoulder pain, stopped") raises the
+  # risk for this many days and backs off the lifts that load that body part.
+  # The body part -> lifts map is pain_affects in fitapp/config.py; override it here.
+  pain_hold_days: 14
   # Past injuries. The dashboard shows what your load looked like before each one.
   history: []
   #  - {date: 2026-07-14, label: "Glute strain"}

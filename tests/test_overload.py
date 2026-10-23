@@ -94,3 +94,36 @@ def test_activity_description_marker():
     text = activity_description(s)
     assert text.startswith("Squat: 100×5, 100×5, 100×5\nPull-ups: BW×8")
     assert is_ours(text) and not is_ours("felt strong today")
+
+
+def test_top_singles_are_not_the_working_weight():
+    nxt = progress(h([(70, 7), (75, 5), (75, 4), (80, 1), (80, 1)]), [6, 10], 2.5)
+    assert nxt["weight"] == 75 and nxt["sets"] == 2 and nxt["action"] == "hold"
+
+
+def test_progress_uses_every_session_of_a_lift():
+    note = "1/09\nSquats 100x4\n2/09\nBench 70x8\n28/09\nSquats 100x7, 100x7\n30/09\nSquats 100x4\nPull ups 15x6\n"
+    plan = build_plan(parse_gym_log(note, today=date(2026, 10, 1), set_format="weight_x_reps"), CFG,
+                      date(2026, 10, 1))
+    squat = next(e for t in plan["templates"] for e in t["exercises"] if e["name"] == "Squats")
+    assert squat["next"]["action"] == "hold"   # one miss after 100x7, not "two misses, deload"
+
+
+def test_pain_backs_off_the_lifts_that_load_that_body_part():
+    from fitapp import injury
+    cfg = load_config()
+    today = date(2026, 10, 23)
+    note = "21/10\nBench press 70x8, 70x8\nSquats 100x6\n23/10\nShoulder press 22x9\nLeft shoulder pain, stopped\n"
+    sessions = parse_gym_log(note, today=today, set_format="weight_x_reps")
+    pain = injury.pain_reports(sessions, cfg["injury"], today)
+    plan = build_plan(sessions, cfg["overload"], today, pain)
+    nxt = {e["name"]: e["next"] for t in plan["templates"] for e in t["exercises"]}
+    assert nxt["Bench press"]["action"] == "pain" and nxt["Bench press"]["weight"] == 62.5
+    assert nxt["Shoulder press"]["action"] == "pain"
+    assert nxt["Squats"]["action"] != "pain"
+    assert "6 Nov" in nxt["Bench press"]["note"]
+
+
+def test_activity_description_carries_pain_notes():
+    s = parse_gym_log("29/09\nSquat 3x5 100\nRight knee ache", today=date(2026, 10, 1))[0]
+    assert "Note: Right knee ache" in activity_description(s)

@@ -1,9 +1,10 @@
 """Injury early-warning: the load patterns that tend to come before a strain.
 
-Checks: acute:chronic workload ratio (7-day load vs 28-day weekly average),
-rest days, back-to-back high-load days, Foster's training monotony, and HRV
-sitting under baseline. Past injuries from config get the same scan for the
-fortnight before them, so you can see whether today looks like then.
+Checks: pain noted in the gym log, acute:chronic workload ratio (7-day load
+vs 28-day weekly average), rest days, back-to-back high-load days, Foster's
+training monotony, and HRV sitting under baseline. Past injuries from config,
+and pain notes from the gym log, get the same scan for the day before them,
+so you can see whether today looks like then.
 """
 
 from __future__ import annotations
@@ -12,7 +13,8 @@ import statistics
 from datetime import date, timedelta
 from typing import Any
 
-from .util import d, rnd
+from .gymlog import Session, exercise_key
+from .util import d, has_keyword, rnd
 
 LEVELS = {"ok": 0, "caution": 1, "high": 2}
 
@@ -26,7 +28,50 @@ def daily_load(activities: list[dict], start: date, end: date) -> dict[date, flo
     return loads
 
 
-def scan(loads: dict[date, float], hrv_rows: dict[date, dict], day: date, cfg: dict) -> dict[str, Any]:
+def pain_reports(sessions: list[Session], cfg: dict, today: date) -> list[dict]:
+    """Pain notes from the gym log in the last year, newest first."""
+    hold = int(cfg.get("pain_hold_days", 14))
+    out = []
+    for s in sessions:
+        ago = (today - s.date).days
+        if not 0 <= ago <= 365:
+            continue
+        for n in s.notes:
+            where = " ".join(x for x in (n.get("side"), n.get("body_part")) if x)
+            out.append({**n, "date": s.date.isoformat(), "days_ago": ago,
+                        "label": (where[:1].upper() + where[1:] + " pain") if where else "Pain",
+                        "active": ago < hold, "until": (s.date + timedelta(days=hold)).isoformat(),
+                        "affects": list((cfg.get("pain_affects") or {}).get(n.get("body_part") or "", []))})
+    return sorted(out, key=lambda r: r["date"], reverse=True)
+
+
+def pain_hits(name: str, reports: list[dict]) -> dict | None:
+    """The newest active pain report that should hold back the lift called ``name``."""
+    key = exercise_key(name)
+    for r in reports:
+        if r["active"] and (has_keyword(name.replace("-", " "), r["affects"])
+                            or (r.get("exercise") and exercise_key(r["exercise"]) == key)):
+            return r
+    return None
+
+
+def _pain_flags(pain: list[dict], day: date, hold: int) -> list[tuple[str, str, str]]:
+    flags, seen = [], set()
+    for p in sorted(pain, key=lambda r: r["date"], reverse=True):
+        ago = (day - d(p["date"])).days
+        if not 0 <= ago < hold or p["label"] in seen:
+            continue
+        seen.add(p["label"])
+        when = "today" if ago == 0 else "yesterday" if ago == 1 else f"{ago} days ago"
+        ex = p.get("exercise") or ""
+        during = f" during {ex if ex[:2].isupper() else ex[:1].lower() + ex[1:]}" if ex else ""
+        stopped = " (you stopped)" if p.get("stopped") else ""
+        flags.append(("pain", "high" if ago < 7 else "caution", f"{p['label']} {when}{during}{stopped}"))
+    return flags
+
+
+def scan(loads: dict[date, float], hrv_rows: dict[date, dict], day: date, cfg: dict,
+         pain: list[dict] | None = None) -> dict[str, Any]:
     """Risk flags as of the end of ``day``."""
     last7 = [loads.get(day - timedelta(days=k), 0.0) for k in range(7)][::-1]
     last14 = [loads.get(day - timedelta(days=k), 0.0) for k in range(14)][::-1]
@@ -49,7 +94,7 @@ def scan(loads: dict[date, float], hrv_rows: dict[date, dict], day: date, cfg: d
             seen += 1
             low_hrv += r["hrv"] < r["hrv_low"]
 
-    flags = []
+    flags = _pain_flags(pain or [], day, int(cfg.get("pain_hold_days", 14)))
     if acwr is not None and chronic >= 50:
         if acwr >= cfg["acwr_high"]:
             flags.append(("acwr", "high", f"Load spike: last 7 days are {acwr:.2f}× your 4-week average"))
@@ -81,34 +126,42 @@ def scan(loads: dict[date, float], hrv_rows: dict[date, dict], day: date, cfg: d
     }
 
 
-def build(activities: list[dict], daily: list[dict], cfg: dict, today: date) -> dict[str, Any]:
+def build(activities: list[dict], daily: list[dict], cfg: dict, today: date,
+          pain: list[dict] | None = None) -> dict[str, Any]:
     start = today - timedelta(days=400)
     loads = daily_load(activities, start, today)
     hrv_rows = {d(r["date"]): r for r in daily}
-    current = scan(loads, hrv_rows, today, cfg)
+    pain = pain or []
+    current = scan(loads, hrv_rows, today, cfg, pain)
 
     weeks = []
     for w in range(11, -1, -1):
         end = today - timedelta(days=7 * w)
-        s = scan(loads, hrv_rows, end, cfg)
+        s = scan(loads, hrv_rows, end, cfg, pain)
         weeks.append({"week_ending": end.isoformat(), "load": s["acute"], "acwr": s["acwr"],
                       "rest_days": s["rest_days_7"], "back_to_back": s["back_to_back"],
                       "monotony": s["monotony"], "risk": s["risk"], "flags": [f["key"] for f in s["flags"]]})
 
+    # Past injuries from config, plus the first day of each pain in the gym log.
+    past = [(d(inj["date"]), inj.get("label", "Injury"), "config") for inj in cfg.get("history") or []]
+    for p in sorted(pain, key=lambda r: r["date"]):
+        when = d(p["date"])
+        if not any(lbl == p["label"] and 0 <= (when - w).days < 21 for w, lbl, _ in past):
+            past.append((when, p["label"], "gym log"))
     history = []
-    for inj in cfg.get("history") or []:
-        when = d(inj["date"])
+    for when, label, source in sorted(past):
         if when < start:
             continue
         before = scan(loads, hrv_rows, when - timedelta(days=1), cfg)
-        history.append({"date": when.isoformat(), "label": inj.get("label", "Injury"), "scan": before})
+        history.append({"date": when.isoformat(), "label": label, "source": source, "scan": before})
     shared = []
-    if history:
-        now_keys = {f["key"] for f in current["flags"]}
-        for h in history:
-            common = now_keys & {f["key"] for f in h["scan"]["flags"]}
-            if common:
-                shared.append({"label": h["label"], "date": h["date"], "shared": sorted(common)})
+    now_keys = {f["key"] for f in current["flags"]} - {"pain"}
+    for h in history:
+        if (today - d(h["date"])).days < 14:
+            continue  # still inside that injury's own window
+        common = now_keys & {f["key"] for f in h["scan"]["flags"]}
+        if common:
+            shared.append({"label": h["label"], "date": h["date"], "shared": sorted(common)})
 
     series = [{"date": day.isoformat(), "load": rnd(v, 0)}
               for day, v in sorted(loads.items()) if day >= today - timedelta(days=84)]
@@ -117,6 +170,6 @@ def build(activities: list[dict], daily: list[dict], cfg: dict, today: date) -> 
         if day >= today - timedelta(days=84):
             s = scan(loads, hrv_rows, day, cfg)
             acwr_series.append({"date": day.isoformat(), "acwr": s["acwr"]})
-    return {"current": current, "weeks": weeks, "history": history, "matches_past": shared,
+    return {"current": current, "weeks": weeks, "history": history, "matches_past": shared, "pain": pain,
             "daily_load": series, "acwr_series": acwr_series,
             "thresholds": {k: cfg[k] for k in ("acwr_caution", "acwr_high", "rest_day_load", "high_day_load")}}

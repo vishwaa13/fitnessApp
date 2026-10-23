@@ -235,6 +235,8 @@ def _gym_log(today: date, rng: random.Random) -> str:
                 w_txt = f"{w:g}" if w else "bw"
                 text = fmt.format(n=len(done), r=done[0], r2=done[-1], w=w_txt, reps=",".join(str(x) for x in done))
                 lines.append(f"{lname} {text}")
+                if lname == "OHP" and 7 <= (today - day).days <= 13:
+                    lines.append("Left shoulder niggle on the last set")
                 if all(r >= hi for r in done):
                     state[name][lname] = [(w + inc) if w else None, [lo] * 3]
                 else:

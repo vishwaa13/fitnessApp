@@ -459,7 +459,7 @@
     if (st === "uploaded") return t.scheduled_for ? `On your watch, scheduled ${day(t.scheduled_for)}` : "On your watch (Garmin workouts)";
     return "Garmin: " + st;
   }
-  const ACTION = { add_weight: ["green", "Add weight"], add_reps: ["plain accent", "Add reps"], hold: ["amber", "Hold"], deload: ["red", "Deload"], add_load: ["green", "Add load"] };
+  const ACTION = { add_weight: ["green", "Add weight"], add_reps: ["plain accent", "Add reps"], hold: ["amber", "Hold"], deload: ["red", "Deload"], add_load: ["green", "Add load"], pain: ["red", "Back off: pain"] };
   function renderStrength(panel) {
     const ov = DATA.overload;
     if (!ov.templates || !ov.templates.length) {
@@ -518,6 +518,7 @@
           tile("Back-to-back hard days", c.back_to_back, `hard = load ≥ ${th.high_day_load}`),
           tile("Monotony", fmt(c.monotony, 1), "above 2 means every day looks the same")),
         c.flags.length ? h("div", { class: "rows" }, c.flags.map(f => h("div", { class: "row" }, h("span", null, f.text), chip(f.level, f.level)))) : h("p", { class: "note" }, "No warning patterns right now.")),
+      painCard(inj.pain || []),
       h("section", { class: "card" }, h("h2", null, "Daily training load"),
         h("div", { class: "legend" }, h("span", null, h("i", { class: "box", style: "background:var(--accent);opacity:1" }), "Normal day"), h("span", null, h("i", { class: "box", style: "background:var(--div-bad);opacity:1" }), `High-intensity day (≥ ${th.high_day_load})`)),
         loadChart),
@@ -541,14 +542,25 @@
       });
     });
   }
+  function painCard(pain) {
+    if (!pain.length) return null;
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Pain from your gym log")),
+      h("div", { class: "rows" }, pain.map(p => h("div", { class: "row" },
+        h("div", null, h("span", { class: "row-title" }, p.label), h("span", { class: "muted small" }, " · " + day(p.date) + (p.exercise ? " · " + p.exercise : ""))),
+        p.active ? chip("red", "Until " + day(p.until)) : chip("plain", "Past"),
+        h("p", { class: "row-sub" }, "\u201c" + p.text + "\u201d" + (p.active && p.affects.length
+          ? ` Lifts that load the ${p.body_part} are backed off 10% until ${day(p.until)}; see Strength.` : ""))))),
+      h("p", { class: "small muted" }, "A pain line in the gym log raises the risk for two weeks. If it doesn't settle, get it looked at."));
+  }
   function pastInjuries(inj) {
     if (!inj.history || !inj.history.length) {
       return h("section", { class: "card" }, h("h2", null, "Past injuries"),
-        h("p", { class: "note" }, "Add your glute strain (and any other injury) under injury.history in config.yml. The dashboard then shows what your load looked like in the week before it, and warns when today matches."));
+        h("p", { class: "note" }, "Write pain into your gym log (\u201cLeft shoulder pain, stopped\u201d) and it lands here, or add older injuries like your glute strain under injury.history in config.yml. The dashboard then shows what your load looked like the day before each one, and warns when today matches."));
     }
     return h("section", { class: "card" }, h("h2", null, "Before past injuries"),
       h("div", { class: "rows" }, inj.history.map(x => h("div", { class: "row" },
-        h("div", null, h("span", { class: "row-title" }, x.label), h("span", { class: "muted small" }, " · " + day(x.date))),
+        h("div", null, h("span", { class: "row-title" }, x.label), h("span", { class: "muted small" }, " · " + day(x.date) + (x.source === "gym log" ? " · from gym log" : ""))),
         chip(x.scan.risk, x.scan.risk + " risk"),
         h("p", { class: "row-sub" }, x.scan.flags.length ? "The day before: " + x.scan.flags.map(f => f.text.toLowerCase()).join("; ") + "." : "No warning pattern the day before.")))));
   }

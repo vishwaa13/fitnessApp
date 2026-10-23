@@ -62,6 +62,13 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def parse_sessions(gym_text: str | None, today: date, ov: dict) -> list[Session]:
+    if not gym_text:
+        return []
+    return parse_gym_log(gym_text, today, ov["date_order"], ov["weight_unit"],
+                         ov.get("set_format", "auto"), ov.get("aliases"))
+
+
 def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             manual_tags: dict[str, list[str]], cfg: dict, now: datetime,
             calendar_events: list[dict] | None, sources: dict[str, str],
@@ -84,8 +91,9 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
     tourneys = tournaments.build(activities, daily, cfg["tournaments"], home, max_hr, today)
 
     ov = cfg["overload"]
-    sessions: list[Session] = parse_gym_log(gym_text or "", today, ov["date_order"], ov["weight_unit"]) if gym_text else []
-    plan = overload.build_plan(sessions, ov, today)
+    sessions = parse_sessions(gym_text, today, ov)
+    pain = injury.pain_reports(sessions, cfg["injury"], today)
+    plan = overload.build_plan(sessions, ov, today, pain)
     plan["unparsed"] = [{"date": s.date.isoformat(), "lines": s.unparsed} for s in sessions[-10:] if s.unparsed]
     plan["recent_sessions"] = [s.to_dict() for s in sessions[-8:]][::-1]
 
@@ -93,7 +101,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
                                  cfg["injury"]["high_day_load"])
     rec = recovery.analyse(daily, tags, int(cfg["recovery"]["window_days"]), today)
 
-    inj = injury.build(activities, daily, cfg["injury"], today)
+    inj = injury.build(activities, daily, cfg["injury"], today, pain)
 
     by_date = {r["date"]: r for r in daily}
     today_row = by_date.get(today.isoformat())
@@ -250,6 +258,12 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
                    upcoming_events=upcoming)
     data["travel"] = other_flights
+    if gym_text:
+        ov_out = data["overload"]
+        log.info("Gym log: %d sessions (last %s), %d unreadable lines, %d active pain notes",
+                 ov_out["sessions_logged"], ov_out["last_session"],
+                 sum(len(u["lines"]) for u in ov_out["unparsed"]),
+                 sum(p["active"] for p in data["injury"]["pain"]))
 
     # --- Act: calendar swaps ------------------------------------------------
     mode = cfg["readiness"]["mode"]
@@ -327,7 +341,7 @@ def _next_gym_day(events: list[dict] | None, cfg: dict, today: date) -> date | N
 def _write_descriptions(garmin, activities: list[dict], gym_text: str, cfg: dict, today: date,
                         state: dict) -> int:
     ov = cfg["overload"]
-    sessions = parse_gym_log(gym_text, today, ov["date_order"], ov["weight_unit"])
+    sessions = parse_sessions(gym_text, today, ov)
     by_date: dict[str, list[Session]] = {}
     for s in sessions:
         by_date.setdefault(s.date.isoformat(), []).append(s)

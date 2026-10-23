@@ -9,7 +9,7 @@ data every morning and published on GitHub Pages. It has five parts:
 | **Tournament auto-report** | Groups games by place and date (Viareggio → Burla) and reports per-game load, average and peak HR, how intensity faded across the days, total load, and how many days your HRV took to come back. A season table ranks what each event cost you. |
 | **Progressive overload builder** | Reads your Google Keep note **gym logs**, applies double progression to every lift, and uploads the next session to Garmin as a strength workout with the weight and reps for each set, so the watch tells you what to hit. It also writes the lifts you actually did into the matching Garmin activity's description. |
 | **Recovery correlations** | Plots HRV and sleep against alcohol, late training, travel, tournament days and big training days, then measures each one's effect on your next-morning numbers with a confidence range. |
-| **Injury early-warning** | Scans for the patterns that come before strains: a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, and HRV stuck under baseline. Add your glute strain date and it shows what the week before it looked like and warns when today matches. |
+| **Injury early-warning** | Scans for the patterns that come before strains: pain you noted in the gym log, a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, and HRV stuck under baseline. Add your glute strain date and it shows what the week before it looked like and warns when today matches. |
 | **Upcoming events** | Lists future frisbee events from your calendar (tryouts, Pesca Disco, EBUCC, Gurls Hat…) with a countdown, the venue, and the flights around each one. Optionally looks up each event's venue and surface for free with Gemini and Google Search. |
 
 Until you add your secrets the site shows **demo data** with a banner, so you
@@ -123,8 +123,8 @@ backfills 45 days of daily metrics, and later runs fill in the rest of the
 
 One note titled **gym logs** (any note whose title contains that works, so
 "Gym logs 2025" counts too). Start each session with a date. A name after the
-date is the session's name, and the builder keeps separate targets for each
-recurring session.
+date is the session's name; sessions are grouped into workouts by that name, or
+by the lifts they share. Each lift's target comes from every session it was in.
 
 ```
 Mon 29/09 – Lower A
@@ -143,6 +143,26 @@ DB row 24x12, 24x12, 24x10
 Weight before or after the sets, `kg`/`lbs`, `3 sets of 5 at 100kg`, and a
 name on its own line followed by one set per line all work. Timed holds (`3x60s`) are skipped. Lines the
 parser can't read are listed on the Strength tab.
+
+A bare `8 x 15` could be either way round. `overload.set_format: weight_x_reps`
+(set in `config.yml`) reads the first number as the weight, so `8 X 15` is 8 kg
+for 15 and `0 X 5` is bodyweight. Top singles (`80 X 1` after `75 X 5`) don't set
+the working weight. If you log a lift under different names, list them under
+`overload.aliases`; word order and plurals are already ignored.
+
+**Pain.** Write it on its own line where it happened:
+
+```
+Incline dumbbell bench press
+26 X
+Left shoulder pain, stopped
+```
+
+The dashboard marks injury risk high for a week and caution for the week after,
+lists it on the Load & injury tab with the load you had the day before, and
+backs off the lifts that load that body part by 10% for two weeks
+(`injury.pain_hold_days`; the body part → lifts map is `pain_affects` in
+`fitapp/config.py`).
 
 **Recovery tags** (optional): a second note titled **recovery tags** with lines
 like `27/09 alcohol` or `28/09 travel, late dinner`. If you log alcohol in

@@ -92,3 +92,74 @@ Pull ups bw 8,7,6
 def test_tags_note():
     tags = parse_tags_note("27/09 alcohol, travel\n28 Sep beers + late dinner", today=TODAY)
     assert tags == {"2026-09-27": ["alcohol", "travel"], "2026-09-28": ["alcohol", "late_dinner"]}
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("4sept", (date(2026, 9, 4), "")),
+    ("Sept 26", (date(2026, 9, 26), "")),
+    ("12 October", (date(2025, 10, 12), "")),  # TODAY is 1 Oct 2026
+])
+def test_more_date_lines(line, expected):
+    assert parse_date_line(line, TODAY) == expected
+
+
+@pytest.mark.parametrize("line", ["Decline 3x5", "5 reps", "Junk 3", "10 sec"])
+def test_words_that_start_like_months_are_not_dates(line):
+    assert parse_date_line(line, TODAY) is None
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("Lateral raises 8 X 15", sets((8, 15))),
+    ("Pull ups 0 X 5", sets((None, 5))),
+    ("Pull ups 15 X 6, 15 X 5", sets((15, 6), (15, 5))),
+    ("Chin ups 15 X 4, 8", sets((15, 4), (15, 8))),
+    ("Squat 3x8 100", sets((100, 8), (100, 8), (100, 8))),   # bare number bigger than the pair: a weight
+    ("Squat 3x5 100kg", sets((100, 5), (100, 5), (100, 5))),
+])
+def test_weight_first_notes(line, expected):
+    _, got, _ = parse_exercise_line(line, set_format="weight_x_reps")
+    assert got == expected
+
+
+def test_auto_format_reads_zero_as_bodyweight():
+    assert parse_exercise_line("Step ups 0 x 10")[1] == sets((None, 10))
+
+
+@pytest.mark.parametrize("line", ["Incline press 26 X", "Nordic curls 4 sets"])
+def test_abandoned_or_rep_less_sets_are_not_read(line):
+    assert parse_exercise_line(line, set_format="weight_x_reps") is None
+
+
+def test_stacked_log_with_pain_note():
+    note = """23 October
+Squats
+60 X 10
+100 X 4
+
+Incline dumbbell bench press
+26 X
+Left shoulder pain, stopped
+
+Pull ups -
+0 X 5
+15 X 6
+"""
+    s, = parse_gym_log(note, today=date(2026, 10, 23), set_format="weight_x_reps")
+    assert [e.name for e in s.exercises] == ["Squats", "Pull ups"]
+    assert s.exercises[1].sets == sets((None, 5), (15, 6))
+    assert s.unparsed == ["Incline dumbbell bench press: 26 X"]
+    assert s.notes == [{"text": "Left shoulder pain, stopped", "body_part": "shoulder", "side": "left",
+                        "exercise": "Incline dumbbell bench press", "stopped": True}]
+
+
+def test_session_with_only_a_pain_note_is_kept():
+    s, = parse_gym_log("2/10\nLower back sore after cleans", today=TODAY)
+    assert s.notes[0]["body_part"] == "lower back" and s.notes[0]["side"] is None
+
+
+def test_keys_ignore_word_order_and_plurals_and_follow_aliases():
+    note = "28/09\nVertical pull cable 70x8\nBarbell bench press 70x7\n30/09\nCable vertical pull 75x5\nBench press 70x8\n"
+    a, b = parse_gym_log(note, today=TODAY, aliases={"Bench press": ["Barbell bench press"]})
+    assert a.exercises[0].key == b.exercises[0].key
+    assert a.exercises[1].key == b.exercises[1].key
+    assert a.exercises[1].name == "Barbell bench press"   # the name you wrote is kept

@@ -3,7 +3,8 @@
 Double progression: each lift has a rep range (say 6-10). Keep the weight
 until every working set reaches the top of the range, then add weight and
 drop back to the bottom. Two sessions in a row below the bottom of the range
-at the same weight trigger a 10% deload.
+at the same weight trigger a 10% deload. A pain note in the gym log backs off
+the lifts that load that body part by 10% until the pain window has passed.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from .gymlog import Session, exercise_key
-from .util import has_keyword
+from .injury import pain_hits
+from .util import d, has_keyword
 
 # (keywords, Garmin category, Garmin exerciseName). First match wins, so the
 # specific variants come before the generic ones. Only pairs that exist in
@@ -76,19 +78,22 @@ def _round_to(value: float, step: float) -> float:
     return round(round(value / step) * step, 2)
 
 
-def _working_sets(sets: list[dict]) -> list[dict]:
+def _working_sets(sets: list[dict], low: int = 0) -> list[dict]:
+    """The sets at the heaviest weight, ignoring top singles: a weight counts only
+    if you got at least half the bottom of the rep range there (80x1 after 75x5)."""
     weights = [s["w"] for s in sets if s["w"]]
     if not weights:
         return list(sets)
-    top = max(weights)
+    enough = [s["w"] for s in sets if s["w"] and s["r"] >= max(2, low // 2)]
+    top = max(enough or weights)
     return [s for s in sets if s["w"] == top]
 
 
 def progress(history: list[dict], rep_range: list[int], increment: float) -> dict[str, Any]:
     """Next target from a lift's history (oldest first), each {"date", "sets"}."""
     last = history[-1]
-    work = _working_sets(last["sets"])
     lo, hi = rep_range
+    work = _working_sets(last["sets"], lo)
     weight = work[0]["w"]
     reps = [s["r"] for s in work]
     n = len(work)
@@ -105,7 +110,7 @@ def progress(history: list[dict], rep_range: list[int], increment: float) -> dic
     if any(r < lo for r in reps):
         stalled = False
         if len(history) >= 2:
-            prev = _working_sets(history[-2]["sets"])
+            prev = _working_sets(history[-2]["sets"], lo)
             stalled = prev[0]["w"] == weight and any(s["r"] < lo for s in prev)
         if stalled and not bodyweight:
             new_w = _round_to(weight * 0.9, increment / 2 if increment <= 2.5 else 2.5)
@@ -117,6 +122,17 @@ def progress(history: list[dict], rep_range: list[int], increment: float) -> dic
     targets = [min(hi, r + 1) for r in reps]
     return {"weight": weight, "sets": n, "reps": targets, "action": "add_reps",
             "note": "Same weight, one more rep on each set."}
+
+
+def back_off_for_pain(history: list[dict], rep_range: list[int], increment: float, report: dict) -> dict[str, Any]:
+    work = _working_sets(history[-1]["sets"], rep_range[0])
+    weight = work[0]["w"]
+    n = len(work)
+    new_w = _round_to(weight * 0.9, increment) if weight else None
+    when, until = (f"{x.day} {x:%b}" for x in (d(report["date"]), d(report["until"])))
+    return {"weight": new_w, "sets": n, "reps": [rep_range[0]] * n, "action": "pain",
+            "note": f"{report['label']} on {when}. 10% lighter, pain-free reps only, until {until}. "
+                    "Still hurting? Skip it and get it checked."}
 
 
 def _signature(session: Session) -> set[str]:
@@ -152,7 +168,7 @@ def template_name(members: list[Session]) -> str:
     return " + ".join(names) if names else "Session"
 
 
-def build_plan(sessions: list[Session], cfg: dict, today: date) -> dict[str, Any]:
+def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict] | None = None) -> dict[str, Any]:
     """Next-session targets for every recently used workout template."""
     by_lift: dict[str, list[dict]] = {}
     display: dict[str, str] = {}
@@ -193,11 +209,11 @@ def build_plan(sessions: list[Session], cfg: dict, today: date) -> dict[str, Any
             lift = lifts.get(e.key)
             if not lift:
                 continue
-            # Progress from this template's own history of the lift when it has one.
-            own = [{"date": m.date.isoformat(), "sets": x.sets}
-                   for m in members for x in m.exercises if x.key == e.key and x.sets]
-            hist = own or lift["_hist"]
+            # Every session of the lift counts, whichever workout it was in.
+            hist = lift["_hist"]
             nxt = progress(hist, lift["rep_range"], lift["increment"])
+            if report := pain_hits(lift["name"], pain or []):
+                nxt = back_off_for_pain(hist, lift["rep_range"], lift["increment"], report)
             exercises.append({
                 "name": lift["name"], "key": e.key, "rep_range": lift["rep_range"],
                 "last": {"date": hist[-1]["date"], "sets": hist[-1]["sets"]},
@@ -313,6 +329,7 @@ def activity_description(session: Session) -> str:
     for e in session.exercises:
         sets = ", ".join(f"{s['w']:g}×{s['r']}" if s["w"] else f"BW×{s['r']}" for s in e.sets)
         lines.append(f"{e.name}: {sets}")
+    lines += [f"Note: {n['text']}" for n in session.notes]
     return "\n".join(lines + [DESCRIPTION_MARKER])
 
 

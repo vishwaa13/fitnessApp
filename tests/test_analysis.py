@@ -121,3 +121,25 @@ def test_injury_quiet_week_is_low_risk():
             acts.append(act(k, d, load=100))
     res = injury.build(acts, [], CFG["injury"], TODAY)
     assert res["current"]["risk"] == "low"
+
+
+def _pain(day, label="Left shoulder pain", part="shoulder"):
+    from fitapp.gymlog import Session
+    s = Session(date=day, notes=[{"text": "Left shoulder pain, stopped", "body_part": part, "side": "left",
+                                  "exercise": "Incline dumbbell bench press", "stopped": True}])
+    return injury.pain_reports([s], CFG["injury"], TODAY)
+
+
+def test_recent_pain_makes_risk_high_then_caution_then_clears():
+    res = injury.build([], [], CFG["injury"], TODAY, _pain(TODAY - timedelta(days=1)))
+    flag = res["current"]["flags"][0]
+    assert res["current"]["risk"] == "high" and flag["key"] == "pain"
+    assert flag["text"] == "Left shoulder pain yesterday during incline dumbbell bench press (you stopped)"
+    assert injury.build([], [], CFG["injury"], TODAY, _pain(TODAY - timedelta(days=9)))["current"]["risk"] == "moderate"
+    assert injury.build([], [], CFG["injury"], TODAY, _pain(TODAY - timedelta(days=20)))["current"]["risk"] == "low"
+
+
+def test_pain_from_the_gym_log_becomes_injury_history():
+    res = injury.build([], [], CFG["injury"], TODAY, _pain(TODAY - timedelta(days=30)))
+    assert [(h["label"], h["source"]) for h in res["history"]] == [("Left shoulder pain", "gym log")]
+    assert res["pain"][0]["active"] is False

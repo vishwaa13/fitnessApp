@@ -15,6 +15,13 @@ People write sets in many ways, so the parser accepts all of these:
 and the stacked form where the exercise name sits on its own line followed by
 one line per set. Lines it can't read are kept in ``unparsed`` so the dashboard
 can show them instead of silently dropping data.
+
+A bare "80 x 8" is ambiguous. With ``set_format="weight_x_reps"`` the first
+number is always the weight (so "8 x 15" is 8 kg for 15 and "0 x 5" is
+bodyweight); the default "auto" takes the larger number as the weight.
+
+Lines that mention pain ("Left shoulder pain, stopped") are kept as notes on
+the session, tied to the lift they came after, for the injury early-warning.
 """
 
 from __future__ import annotations
@@ -23,8 +30,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-MONTHS = {m: i for i, m in enumerate(
-    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august",
+               "september", "october", "november", "december"]
+MONTHS = {m[:3]: i for i, m in enumerate(MONTH_NAMES, 1)}
 WEEKDAY = r"(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\.?,?\s*"
 NUM = r"\d+(?:[.,]\d+)?"
 UNIT = r"(?:kgs?|k|lbs?)\b"
@@ -34,12 +42,24 @@ _ISO_RE = re.compile(r"^\s*(?:" + WEEKDAY + r")?(\d{4})-(\d{1,2})-(\d{1,2})\b(.*
 _NUMERIC_RE = re.compile(
     r"^\s*(?:" + WEEKDAY + r")?(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?(?![\d/x])(.*)$", re.I)
 _TEXT_DM_RE = re.compile(
-    r"^\s*(?:" + WEEKDAY + r")?(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\.?,?(?:\s+(\d{4}))?\b(.*)$", re.I)
+    r"^\s*(?:" + WEEKDAY + r")?(\d{1,2})(?:st|nd|rd|th)?\s*([a-z]{3,9})\.?,?(?:\s+(\d{4}))?\b(.*)$", re.I)
 _TEXT_MD_RE = re.compile(
     r"^\s*(?:" + WEEKDAY + r")?([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?(?:\s+(\d{4}))?\b(.*)$", re.I)
 _RANGE_RE = re.compile(r"\(\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\s*\)")
 _SET_HINT_RE = re.compile(r"\d\s*[x×*]\s*\d|\d\s*(?:kg|lb)", re.I)
 
+PAIN_RE = re.compile(r"\b(?:pain\w*|hurt\w*|sore\w*|injur\w*|tweak\w*|strain\w*|sprain\w*|pulled|"
+                     r"twinge\w*|niggle\w*|ache|aches|aching|achy|pinched|discomfort)\b", re.I)
+# Longest first, so "lower back" wins over "back". Values are the name shown.
+BODY_PARTS = [
+    ("rotator cuff", "shoulder"), ("lower back", "lower back"), ("upper back", "upper back"),
+    ("hip flexor", "hip flexor"), ("it band", "IT band"), ("shoulder", "shoulder"), ("knee", "knee"),
+    ("hamstring", "hamstring"), ("hammy", "hamstring"), ("glute", "glute"), ("groin", "groin"),
+    ("adductor", "adductor"), ("achilles", "achilles"), ("ankle", "ankle"), ("calf", "calf"),
+    ("calves", "calf"), ("elbow", "elbow"), ("wrist", "wrist"), ("neck", "neck"), ("quad", "quad"),
+    ("chest", "chest"), ("pec", "chest"), ("foot", "foot"), ("shin", "shin"), ("hip", "hip"),
+    ("back", "back"), ("bicep", "bicep"), ("tricep", "tricep"), ("forearm", "forearm"), ("trap", "trap"),
+]
 
 @dataclass
 class Exercise:
@@ -47,10 +67,11 @@ class Exercise:
     sets: list[dict] = field(default_factory=list)   # [{"w": float | None, "r": int}]
     rep_range: list[int] | None = None
     raw: list[str] = field(default_factory=list)
+    canonical: str | None = None   # set from config aliases, so renamed lifts share a history
 
     @property
     def key(self) -> str:
-        return exercise_key(self.name)
+        return exercise_key(self.canonical or self.name)
 
 
 @dataclass
@@ -59,6 +80,7 @@ class Session:
     title: str | None = None
     exercises: list[Exercise] = field(default_factory=list)
     unparsed: list[str] = field(default_factory=list)
+    notes: list[dict] = field(default_factory=list)   # pain notes, see pain_note()
 
     def to_dict(self) -> dict:
         return {
@@ -67,11 +89,35 @@ class Session:
             "exercises": [{"name": e.name, "key": e.key, "sets": e.sets, "rep_range": e.rep_range}
                           for e in self.exercises],
             "unparsed": self.unparsed,
+            "notes": self.notes,
         }
 
 
 def exercise_key(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", name.lower()).rstrip("s")
+    """Same key for "Pull-ups", "pull ups" and "Vertical pull cable" / "Cable vertical pull"."""
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    words = [w[:-1] if len(w) > 2 and w.endswith("s") and not w.endswith("ss") else w for w in words]
+    return "".join(sorted(words))
+
+
+def clean_name(text: str) -> str:
+    return re.sub(r"^[\s\-–—:|·,]+|[\s\-–—:|·,]+$", "", text)
+
+
+def pain_note(line: str, exercise: str | None) -> dict | None:
+    """{"text", "body_part", "side", "exercise", "stopped"} if the line reports pain."""
+    if not PAIN_RE.search(line):
+        return None
+    low = line.lower()
+    part = next((shown for word, shown in BODY_PARTS if re.search(rf"\b{word}s?\b", low)), None)
+    side = next((s for s in ("left", "right", "both") if re.search(rf"\b{s}\b", low)), None)
+    return {"text": line.strip(), "body_part": part, "side": side, "exercise": exercise,
+            "stopped": bool(re.search(r"\bstop\w*|\bquit\b|\babandon\w*|\bskipped\b", low))}
+
+
+def _is_month(word: str) -> bool:
+    word = word.lower()
+    return len(word) >= 3 and any(m.startswith(word) for m in MONTH_NAMES)
 
 
 def _year_for(month: int, day: int, today: date) -> int:
@@ -98,9 +144,9 @@ def parse_date_line(line: str, today: date, order: str = "DMY") -> tuple[date, s
         if year is not None and year < 100:
             year += 2000
         candidates.append((year, month, day, m[4]))  # type: ignore[arg-type]
-    elif (m := _TEXT_DM_RE.match(text)) and m[2][:3].lower() in MONTHS:
+    elif (m := _TEXT_DM_RE.match(text)) and _is_month(m[2]):
         candidates.append((int(m[3]) if m[3] else None, MONTHS[m[2][:3].lower()], int(m[1]), m[4]))  # type: ignore[arg-type]
-    elif (m := _TEXT_MD_RE.match(text)) and m[1][:3].lower() in MONTHS:
+    elif (m := _TEXT_MD_RE.match(text)) and _is_month(m[1]):
         candidates.append((int(m[3]) if m[3] else None, MONTHS[m[1][:3].lower()], int(m[2]), m[4]))  # type: ignore[arg-type]
     for year, month, day, rest in candidates:
         if not (1 <= month <= 12 and 1 <= day <= 31):
@@ -149,9 +195,14 @@ def _to_kg(value: float, unit: str | None, target_unit: str) -> float:
     return value
 
 
-def parse_sets(rest: str, target_unit: str = "kg") -> tuple[list[dict], bool] | None:
+def parse_sets(rest: str, target_unit: str = "kg", set_format: str = "auto") -> tuple[list[dict], bool] | None:
     """Turn the numeric part of an exercise line into sets. None if unreadable."""
+    if re.fullmatch(r"\s*\d+\s*sets?\s*", rest, re.I):
+        return None  # "4 sets" with no reps: nothing to progress from
+    weight_first = set_format == "weight_x_reps"
     s = _normalize(rest)
+    if re.search(r"\d\s*x\s*$", s.strip()):
+        return None  # "26 x" with no reps: an abandoned set
     if re.search(r"\d\s*(?:s|sec|secs|seconds|min|mins|minutes)\b", s):
         return None  # timed holds/carries aren't rep-progressed
     bodyweight = bool(re.search(r"\bbw\b|bodyweight|body weight", s))
@@ -192,9 +243,11 @@ def parse_sets(rest: str, target_unit: str = "kg") -> tuple[list[dict], bool] | 
     # No explicit weight: a bare number in front of a rep list (or next to a
     # sets x reps pair) is the weight - "80: 8,8,7", "80 8 8 7", "3x5 100".
     if not has_weight_tok and not bodyweight and nums:
-        if pairs and all(max(p.values) <= 30 for p in pairs):
+        if pairs and all(max(p.values) <= 30 for p in pairs) and (
+                not weight_first or min(t.values[0] for t in nums) > max(max(p.values) for p in pairs)):
             # "3x5 100" / "2x8 80, 1x6 85": the pairs are sets x reps, so
-            # every bare number is a weight.
+            # every bare number is a weight. (Weight-first notes only when the
+            # bare numbers are bigger: "15 x 4, 8" is 15 kg x 4 then 8 reps.)
             for t in nums:
                 t.kind, t.units = "weight", (None,)
             has_weight_tok = True
@@ -238,10 +291,15 @@ def parse_sets(rest: str, target_unit: str = "kg") -> tuple[list[dict], bool] | 
                 w, reps = _to_kg(b, ub, target_unit), a
                 sets.append({"w": w, "r": int(reps)})
                 current_w = w
-            elif has_weight_tok or bodyweight or (len(pairs) == 1 and a <= 6 and b <= 30 and a % 1 == 0):
+            elif has_weight_tok or bodyweight or (not weight_first and len(pairs) == 1
+                                                  and 0 < a <= 6 and b <= 30 and a % 1 == 0):
                 # sets x reps, weight comes from elsewhere on the line (or bodyweight)
                 w = None if bodyweight else weight_near(tok.pos)
                 sets += [{"w": w, "r": int(b)} for _ in range(int(a))]
+            elif weight_first or a == 0:
+                w, reps = a or None, b  # a weight of 0 is bodyweight
+                sets.append({"w": w, "r": int(reps)})
+                current_w = w
             else:
                 w, reps = (a, b) if a >= b else (b, a)
                 sets.append({"w": w, "r": int(reps)})
@@ -257,7 +315,8 @@ def parse_sets(rest: str, target_unit: str = "kg") -> tuple[list[dict], bool] | 
     return sets, bodyweight
 
 
-def parse_exercise_line(line: str, unit: str = "kg") -> tuple[str | None, list[dict], list[int] | None] | None:
+def parse_exercise_line(line: str, unit: str = "kg",
+                        set_format: str = "auto") -> tuple[str | None, list[dict], list[int] | None] | None:
     """Return (name or None for a continuation line, sets, rep_range)."""
     s = line.strip().lstrip("-•*·>").strip()
     rep_range = None
@@ -268,20 +327,26 @@ def parse_exercise_line(line: str, unit: str = "kg") -> tuple[str | None, list[d
     m = re.search(r"\d|\bbw\b|\bbodyweight\b|@", s, re.I)
     if not m:
         return None
-    name = s[:m.start()].strip(" :-–—\t,(")
-    parsed = parse_sets(s[m.start():], unit)
+    name = clean_name(s[:m.start()]).rstrip("(").strip()
+    parsed = parse_sets(s[m.start():], unit, set_format)
     if parsed is None:
         return None
     sets, _ = parsed
     return (name or None), sets, rep_range
 
 
-def parse_gym_log(text: str, today: date | None = None, order: str = "DMY",
-                  unit: str = "kg") -> list[Session]:
+def parse_gym_log(text: str, today: date | None = None, order: str = "DMY", unit: str = "kg",
+                  set_format: str = "auto", aliases: dict[str, list[str]] | None = None) -> list[Session]:
+    """``aliases`` maps a lift's name to other names you've logged it under."""
     today = today or date.today()
+    canonical = {exercise_key(alt): name for name, alts in (aliases or {}).items() for alt in (alts or [])}
     sessions: list[Session] = []
     current: Session | None = None
     pending_name: str | None = None
+
+    def exercise(name: str, sets: list[dict], rep_range: list[int] | None, line: str) -> Exercise:
+        return Exercise(name, list(sets), rep_range, [line], canonical.get(exercise_key(name)))
+
     for raw in text.splitlines():
         line = raw.strip()
         if not line or set(line) <= set("-=_*#~ "):
@@ -295,19 +360,25 @@ def parse_gym_log(text: str, today: date | None = None, order: str = "DMY",
             continue
         if current is None:
             continue  # text before the first date (note intro, etc.)
-        parsed = parse_exercise_line(line, unit)
+        note = pain_note(line, pending_name or (current.exercises[-1].name if current.exercises else None))
+        if note:
+            current.notes.append(note)
+            continue
+        parsed = parse_exercise_line(line, unit, set_format)
         if parsed is None:
             if not re.search(r"\d", line) and len(line) <= 60:
                 # A name on its own line: session title right after the date,
                 # otherwise the exercise the next set lines belong to.
+                name = clean_name(line)
                 if not current.exercises and pending_name is None and current.title is None:
-                    pending_name = line.rstrip(":")
+                    pending_name = name
                     continue
                 if pending_name and not current.exercises and current.title is None:
                     current.title = pending_name
-                pending_name = line.rstrip(":")
+                pending_name = name
             else:
-                current.unparsed.append(line)
+                bare = pending_name and re.match(r"\d", line)
+                current.unparsed.append(f"{pending_name}: {line}" if bare else line)
             continue
         name, sets, rep_range = parsed
         if name is None:
@@ -324,14 +395,14 @@ def parse_gym_log(text: str, today: date | None = None, order: str = "DMY",
                 existing.sets.extend(sets)
                 existing.raw.append(line)
             else:
-                current.exercises.append(Exercise(target_name, list(sets), rep_range, [line]))
+                current.exercises.append(exercise(target_name, sets, rep_range, line))
             continue
         if pending_name and not current.exercises and current.title is None:
             current.title = pending_name
         pending_name = None
-        current.exercises.append(Exercise(name, list(sets), rep_range, [line]))
+        current.exercises.append(exercise(name, sets, rep_range, line))
     # Same date twice (e.g. "AM"/"PM" blocks) stays as two sessions; empty headers go.
-    return sorted([s for s in sessions if s.exercises], key=lambda s: s.date)
+    return sorted([s for s in sessions if s.exercises or s.notes], key=lambda s: s.date)
 
 
 def parse_tags_note(text: str, today: date | None = None, order: str = "DMY") -> dict[str, list[str]]:
