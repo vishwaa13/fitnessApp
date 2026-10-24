@@ -22,6 +22,8 @@ bodyweight); the default "auto" takes the larger number as the weight.
 
 Lines that mention pain ("Left shoulder pain, stopped") are kept as notes on
 the session, tied to the lift they came after, for the injury early-warning.
+Milder lines ("legs sore") are kept as soreness, the same as the recovery
+tags note's "24/10 shoulder 2/5, legs sore".
 """
 
 from __future__ import annotations
@@ -48,8 +50,10 @@ _TEXT_MD_RE = re.compile(
 _RANGE_RE = re.compile(r"\(\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\s*\)")
 _SET_HINT_RE = re.compile(r"\d\s*[x×*]\s*\d|\d\s*(?:kg|lb)", re.I)
 
-PAIN_RE = re.compile(r"\b(?:pain\w*|hurt\w*|sore\w*|injur\w*|tweak\w*|strain\w*|sprain\w*|pulled|"
+PAIN_RE = re.compile(r"\b(?:pain\w*|hurt\w*|injur\w*|tweak\w*|strain\w*|sprain\w*|pulled|"
                      r"twinge\w*|niggle\w*|ache|aches|aching|achy|pinched|discomfort)\b", re.I)
+SORE_RE = re.compile(r"\b(?:sore\w*|stiff\w*|tight\w*|doms|tender)\b", re.I)
+FINE_RE = re.compile(r"\b(?:ok|okay|fine|good|better|pain[ -]?free|no pain)\b", re.I)
 # Longest first, so "lower back" wins over "back". Values are the name shown.
 BODY_PARTS = [
     ("rotator cuff", "shoulder"), ("lower back", "lower back"), ("upper back", "upper back"),
@@ -59,6 +63,8 @@ BODY_PARTS = [
     ("calves", "calf"), ("elbow", "elbow"), ("wrist", "wrist"), ("neck", "neck"), ("quad", "quad"),
     ("chest", "chest"), ("pec", "chest"), ("foot", "foot"), ("shin", "shin"), ("hip", "hip"),
     ("back", "back"), ("bicep", "bicep"), ("tricep", "tricep"), ("forearm", "forearm"), ("trap", "trap"),
+    ("hammies", "hamstring"), ("lats", "back"), ("abs", "core"), ("core", "core"),
+    ("legs", "legs"), ("leg", "legs"), ("arms", "arms"), ("arm", "arms"),
 ]
 
 @dataclass
@@ -81,6 +87,7 @@ class Session:
     exercises: list[Exercise] = field(default_factory=list)
     unparsed: list[str] = field(default_factory=list)
     notes: list[dict] = field(default_factory=list)   # pain notes, see pain_note()
+    soreness: list[dict] = field(default_factory=list)   # see soreness_entry()
 
     def to_dict(self) -> dict:
         return {
@@ -90,6 +97,7 @@ class Session:
                           for e in self.exercises],
             "unparsed": self.unparsed,
             "notes": self.notes,
+            "soreness": self.soreness,
         }
 
 
@@ -104,15 +112,48 @@ def clean_name(text: str) -> str:
     return re.sub(r"^[\s\-–—:|·,]+|[\s\-–—:|·,]+$", "", text)
 
 
+def body_part_of(text: str) -> str | None:
+    low = text.lower()
+    return next((shown for word, shown in BODY_PARTS if re.search(rf"\b{word}s?\b", low)), None)
+
+
+def side_of(text: str) -> str | None:
+    low = text.lower()
+    return next((s for s in ("left", "right", "both") if re.search(rf"\b{s}\b", low)), None)
+
+
 def pain_note(line: str, exercise: str | None) -> dict | None:
     """{"text", "body_part", "side", "exercise", "stopped"} if the line reports pain."""
     if not PAIN_RE.search(line):
         return None
     low = line.lower()
-    part = next((shown for word, shown in BODY_PARTS if re.search(rf"\b{word}s?\b", low)), None)
-    side = next((s for s in ("left", "right", "both") if re.search(rf"\b{s}\b", low)), None)
+    part, side = body_part_of(line), side_of(line)
     return {"text": line.strip(), "body_part": part, "side": side, "exercise": exercise,
             "stopped": bool(re.search(r"\bstop\w*|\bquit\b|\babandon\w*|\bskipped\b", low))}
+
+
+def soreness_entry(text: str) -> dict | None:
+    """{"body_part", "side", "score" (0-5), "text"} for "shoulder 2/5", "legs sore",
+    "left knee 3", "hamstrings ok". A body part needs a score or a word with it."""
+    part = body_part_of(text)
+    if not part:
+        return None
+    low = text.lower()
+    if m := re.search(r"(\d+(?:[.,]\d)?)\s*/\s*(10|5)\b", low):
+        score = float(m[1].replace(",", ".")) * 5 / int(m[2])
+    elif m := re.search(r"(?<![\d./])\b([0-5])\b(?![./]\d)", low):
+        score = int(m[1])
+    elif FINE_RE.search(low):
+        score = 0
+    elif PAIN_RE.search(low):
+        score = 4      # "knee pain" in the soreness note is pain
+    elif re.search(r"\b(?:very|really|super|quite)\s+(?:sore|stiff|tight)", low):
+        score = 3
+    elif SORE_RE.search(low):
+        score = 2
+    else:
+        return None
+    return {"body_part": part, "side": side_of(text), "score": round(min(5.0, score), 1), "text": text.strip()}
 
 
 def _is_month(word: str) -> bool:
@@ -364,6 +405,9 @@ def parse_gym_log(text: str, today: date | None = None, order: str = "DMY", unit
         if note:
             current.notes.append(note)
             continue
+        if SORE_RE.search(line) and not re.search(r"\d\s*x\s*\d", line, re.I) and (sore := soreness_entry(line)):
+            current.soreness.append(sore)
+            continue
         parsed = parse_exercise_line(line, unit, set_format)
         if parsed is None:
             if not re.search(r"\d", line) and len(line) <= 60:
@@ -402,7 +446,7 @@ def parse_gym_log(text: str, today: date | None = None, order: str = "DMY", unit
         pending_name = None
         current.exercises.append(exercise(name, sets, rep_range, line))
     # Same date twice (e.g. "AM"/"PM" blocks) stays as two sessions; empty headers go.
-    return sorted([s for s in sessions if s.exercises or s.notes], key=lambda s: s.date)
+    return sorted([s for s in sessions if s.exercises or s.notes or s.soreness], key=lambda s: s.date)
 
 
 def parse_tags_note(text: str, today: date | None = None, order: str = "DMY") -> dict[str, list[str]]:
@@ -415,7 +459,9 @@ def parse_tags_note(text: str, today: date | None = None, order: str = "DMY") ->
             continue
         when, rest = hdr
         tags = []
-        for part in re.split(r"[,;/+]|\band\b", rest.lower()):
+        pieces = [x for part in re.split(r"[,;+]|\band\b", rest.lower()) if not soreness_entry(part)
+                  for x in part.split("/")]
+        for part in pieces:
             word = re.sub(r"[^a-z ]+", " ", part).strip()
             word = re.sub(r"\s+", "_", word)
             if word in {"drinks", "drink", "beer", "beers", "wine", "booze"}:
@@ -428,3 +474,18 @@ def parse_tags_note(text: str, today: date | None = None, order: str = "DMY") ->
             out.setdefault(when.isoformat(), [])
             out[when.isoformat()] += [t for t in tags if t not in out[when.isoformat()]]
     return out
+
+
+def parse_soreness(text: str, today: date | None = None, order: str = "DMY") -> list[dict]:
+    """Soreness from "24/10 shoulder 2/5, legs sore" lines, oldest first."""
+    today = today or date.today()
+    out = []
+    for raw in text.splitlines():
+        hdr = parse_date_line(raw, today, order)
+        if not hdr:
+            continue
+        when, rest = hdr
+        for part in re.split(r"[,;+]|\band\b", rest):
+            if entry := soreness_entry(part):
+                out.append({"date": when.isoformat(), **entry})
+    return sorted(out, key=lambda e: e["date"])

@@ -213,6 +213,8 @@
     }
     return card;
   }
+  const FLAG_WORDS = { acwr: "load spike", rest: "too few rest days", b2b: "back-to-back hard days", monotony: "monotony",
+    hrv: "low HRV", volume: "gym volume jump", return: "first session after a break", soreness: "soreness", alcohol: "alcohol", pain: "pain" };
   function injurySummary(inj) {
     const c = inj.current;
     return h("section", { class: "card" },
@@ -221,8 +223,15 @@
         : h("p", { class: "note" }, "No warning patterns this week: enough rest, no load spike, no back-to-back hard days."),
       inj.matches_past && inj.matches_past.length ? h("p", { class: "note" },
         h("strong", null, "Looks like before your " + inj.matches_past[0].label.toLowerCase() + ": "),
-        inj.matches_past[0].shared.join(", ") + " pattern" + (inj.matches_past[0].shared.length > 1 ? "s" : "") + " match.") : null,
+        inj.matches_past[0].shared.map(k => FLAG_WORDS[k] || k).join(", ") + (inj.matches_past[0].shared.length > 1 ? " all match." : " matches.")) : null,
+      restedNote(inj),
       h("p", { class: "small muted" }, `Load ratio ${fmt(c.acwr, 2)} · ${c.rest_days_7} rest day${c.rest_days_7 === 1 ? "" : "s"} in 7 · `, go("load")));
+  }
+  function restedNote(inj) {
+    const back = inj.coming_back || [];
+    if (!back.length) return null;
+    return h("p", { class: "note" }, h("strong", null, "Rested 2+ weeks: "),
+      back.map(b => `${b.part} (${b.days} days)`).join(", ") + ". Start 10–15% lighter when you go back; the Strength targets already do.");
   }
   function strengthSummary(ov) {
     const t = (ov.templates || []).find(x => x.up_next);
@@ -459,7 +468,7 @@
     if (st === "uploaded") return t.scheduled_for ? `On your watch, scheduled ${day(t.scheduled_for)}` : "On your watch (Garmin workouts)";
     return "Garmin: " + st;
   }
-  const ACTION = { add_weight: ["green", "Add weight"], add_reps: ["plain accent", "Add reps"], hold: ["amber", "Hold"], deload: ["red", "Deload"], add_load: ["green", "Add load"], pain: ["red", "Back off: pain"] };
+  const ACTION = { add_weight: ["green", "Add weight"], add_reps: ["plain accent", "Add reps"], hold: ["amber", "Hold"], deload: ["red", "Deload"], add_load: ["green", "Add load"], pain: ["red", "Back off: pain"], return: ["amber", "Back after a break"] };
   function renderStrength(panel) {
     const ov = DATA.overload;
     if (!ov.templates || !ov.templates.length) {
@@ -516,9 +525,12 @@
           tile("Last 7 days load", fmt(c.acute), `4-week weekly avg ${fmt(c.chronic)}`),
           tile("Rest days", `${c.rest_days_7} / 7`, `${c.rest_days_14} in the last 14`),
           tile("Back-to-back hard days", c.back_to_back, `hard = load ≥ ${th.high_day_load}`),
-          tile("Monotony", fmt(c.monotony, 1), "above 2 means every day looks the same")),
+          tile("Monotony", fmt(c.monotony, 1), "above 2 means every day looks the same"),
+          tile("Alcohol evenings", `${c.alcohol_7 || 0} / 7`, "Garmin lifestyle log + recovery tags")),
         c.flags.length ? h("div", { class: "rows" }, c.flags.map(f => h("div", { class: "row" }, h("span", null, f.text), chip(f.level, f.level)))) : h("p", { class: "note" }, "No warning patterns right now.")),
       painCard(inj.pain || []),
+      bodyPartsCard(inj),
+      sorenessCard(inj),
       h("section", { class: "card" }, h("h2", null, "Daily training load"),
         h("div", { class: "legend" }, h("span", null, h("i", { class: "box", style: "background:var(--accent);opacity:1" }), "Normal day"), h("span", null, h("i", { class: "box", style: "background:var(--div-bad);opacity:1" }), `High-intensity day (≥ ${th.high_day_load})`)),
         loadChart),
@@ -549,9 +561,73 @@
       h("div", { class: "rows" }, pain.map(p => h("div", { class: "row" },
         h("div", null, h("span", { class: "row-title" }, p.label), h("span", { class: "muted small" }, " · " + day(p.date) + (p.exercise ? " · " + p.exercise : ""))),
         p.active ? chip("red", "Until " + day(p.until)) : chip("plain", "Past"),
-        h("p", { class: "row-sub" }, "\u201c" + p.text + "\u201d" + (p.active && p.affects.length
+        h("p", { class: "row-sub" }, "\u201c" + p.text + "\u201d" + (p.returning
+          ? ` It came on your first ${p.body_part} session in ${p.returning.gap} days (last ${C.fmtDay(p.returning.last)}).` : "")
+          + (p.active && p.affects.length
           ? ` Lifts that load the ${p.body_part} are backed off 10% until ${day(p.until)}; see Strength.` : ""))))),
       h("p", { class: "small muted" }, "A pain line in the gym log raises the risk for two weeks. If it doesn't settle, get it looked at."));
+  }
+  // A heat cell: one sequential hue, light (few) to dark (many); the number is always printed.
+  function heatCell(value, max, hue, tipRows, aria, zero = "·") {
+    const t = value ? Math.min(1, value / max) : 0;
+    const pct = Math.round(14 + 71 * t);
+    const style = value ? `background:color-mix(in oklab, var(${hue}) ${pct}%, var(--surface))` : null;
+    const deep = hue === "--accent" && pct >= 65;   // white reads better than ink on the darkest blues (APCA)
+    const show = e => {
+      const r = e.currentTarget.getBoundingClientRect();
+      C.showTip(e.clientX != null ? e : { clientX: r.right, clientY: r.bottom }, tipRows);
+    };
+    return h("td", null, h("span", { class: "hc" + (value ? "" : " zero") + (deep ? " deep" : ""), style, tabindex: "0", role: "img", "aria-label": aria,
+      onpointermove: show, onfocus: show, onpointerleave: C.hideTip, onblur: C.hideTip }, value == null ? "" : value ? String(value) : zero));
+  }
+  function rampLegend(hue, lo, hi) {
+    return h("span", { class: "ramp-legend small muted" }, lo,
+      h("span", { class: "ramp", "aria-hidden": "true" }, [0.15, 0.4, 0.65, 0.9].map(t =>
+        h("i", { style: `background:color-mix(in oklab, var(${hue}) ${Math.round(14 + 71 * t)}%, var(--surface))` }))), hi);
+  }
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  function bodyPartsCard(inj) {
+    const bp = inj.body_parts;
+    if (!bp || !bp.rows.length) return null;
+    const max = Math.max(6, ...bp.rows.flatMap(r => r.sets));
+    const head = h("tr", null, h("th", { class: "row-h" }, "Body part"),
+      bp.week_ends.map((w, i) => h("th", { scope: "col" }, i === bp.week_ends.length - 1 ? "This week" : C.fmtDay(w))),
+      h("th", { class: "num", scope: "col" }, "vs 4-wk avg"));
+    const rows = bp.rows.map(r => h("tr", null, h("th", { class: "row-h part", scope: "row" }, cap(r.part)),
+      r.sets.map((n, i) => heatCell(n, max, "--accent",
+        [{ head: true, label: `${cap(r.part)} · 7 days to ${C.fmtDay(bp.week_ends[i])}` }, { value: String(n), label: n === 1 ? "hard set" : "hard sets" }],
+        `${r.part}, 7 days to ${C.fmtDay(bp.week_ends[i])}: ${n} hard sets`)),
+      h("td", { class: "num" }, r.acute ? `${fmt(r.ratio, 1)}×` : "–")));
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Gym sets per body part"), rampLegend("--accent", "fewer", "more")),
+      h("p", { class: "note" }, "Hard sets in each 7-day block, from your gym log: sets at 70% or more of that day's top weight for the lift, so warm-ups don't count. A body part well above its 4-week average is flagged in the risk list. Garmin's load misses most of this."),
+      heatWrap(h("table", { class: "heat" }, h("thead", null, head), h("tbody", null, rows))),
+      restedNote(inj));
+  }
+  function sorenessCard(inj) {
+    const so = inj.soreness;
+    if (!inj.soreness_logged || !so || !so.rows.length) {
+      return h("section", { class: "card" }, h("h2", null, "Soreness"),
+        h("p", { class: "note" }, "Add a Google Keep note titled \u201crecovery tags\u201d and jot one line each morning: ",
+          h("code", null, "24/10 shoulder 2/5, legs sore"), ". Scores are out of 5 (or 10). 3/5 is flagged; 4/5 and up is treated as pain and backs off the lifts for that body part. ",
+          h("code", null, "shoulder ok"), " records a good day. Alcohol and travel go on the same lines."));
+    }
+    const head = h("tr", null, h("th", { class: "row-h" }, "Body part"),
+      so.dates.map(x => h("th", { scope: "col", title: day(x) }, C.parseDay(x).toLocaleDateString(undefined, { day: "numeric" }))));
+    const rows = so.rows.map(r => h("tr", null, h("th", { class: "row-h part", scope: "row" }, cap(r.part)),
+      r.scores.map((v, i) => heatCell(v, 5, "--seq2",
+        [{ head: true, label: `${cap(r.part)} · ${day(so.dates[i])}` }, { value: v == null ? "–" : `${v}/5`, label: v == null ? "nothing logged" : "soreness" }],
+        `${r.part}, ${day(so.dates[i])}: ${v == null ? "nothing logged" : v + " out of 5"}`, "0"))));
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Soreness, last 14 days"), rampLegend("--seq2", "1", "5")),
+      h("p", { class: "note" }, "From your recovery tags note and sore lines in the gym log. 0 means you wrote it felt fine."),
+      heatWrap(h("table", { class: "heat" }, h("thead", null, head), h("tbody", null, rows))));
+  }
+  // Newest data is on the right; on a narrow screen start scrolled there.
+  function heatWrap(table) {
+    const wrap = h("div", { class: "tablewrap" }, table);
+    requestAnimationFrame(() => { wrap.scrollLeft = wrap.scrollWidth; });
+    return wrap;
   }
   function pastInjuries(inj) {
     if (!inj.history || !inj.history.length) {

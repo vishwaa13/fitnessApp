@@ -9,7 +9,7 @@ data every morning and published on GitHub Pages. It has five parts:
 | **Tournament auto-report** | Groups games by place and date (Viareggio → Burla) and reports per-game load, average and peak HR, how intensity faded across the days, total load, and how many days your HRV took to come back. A season table ranks what each event cost you. |
 | **Progressive overload builder** | Reads your Google Keep note **gym logs**, applies double progression to every lift, and uploads the next session to Garmin as a strength workout with the weight and reps for each set, so the watch tells you what to hit. It also writes the lifts you actually did into the matching Garmin activity's description. |
 | **Recovery correlations** | Plots HRV and sleep against alcohol, late training, travel, tournament days and big training days, then measures each one's effect on your next-morning numbers with a confidence range. |
-| **Injury early-warning** | Scans for the patterns that come before strains: pain you noted in the gym log, a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, and HRV stuck under baseline. Add your glute strain date and it shows what the week before it looked like and warns when today matches. |
+| **Injury early-warning** | Scans for the patterns that come before strains: pain and soreness you noted, a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, HRV stuck under baseline, gym sets per body part jumping above their 4-week average, the first session back after two weeks off, and alcohol (from Garmin's lifestyle log or your notes). Add your glute strain date and it shows what the day before it looked like and warns when today matches. |
 | **Upcoming events** | Lists future frisbee events from your calendar (tryouts, Pesca Disco, EBUCC, Gurls Hat…) with a countdown, the venue, and the flights around each one. Optionally looks up each event's venue and surface for free with Gemini and Google Search. |
 
 Until you add your secrets the site shows **demo data** with a banner, so you
@@ -164,10 +164,29 @@ backs off the lifts that load that body part by 10% for two weeks
 (`injury.pain_hold_days`; the body part → lifts map is `pain_affects` in
 `fitapp/config.py`).
 
-**Recovery tags** (optional): a second note titled **recovery tags** with lines
-like `27/09 alcohol` or `28/09 travel, late dinner`. If you log alcohol in
-Garmin Connect's lifestyle logging, it's picked up automatically. Late training,
+**Recovery tags and soreness** (optional, but the best data you can give it): a
+second note titled **recovery tags**, one line each morning:
+
+```
+24/10 shoulder 2/5, legs sore, alcohol
+25/10 shoulder ok, hamstrings 3/5
+26/10 travel, late dinner
+```
+
+Body parts with a score (out of 5 or 10), `sore`/`stiff`/`tight`, or `ok` are
+soreness: 3/5 is flagged, 4/5 and up counts as pain (lifts for that body part
+back off 10% for two weeks), and `ok` records a good day. Everything else is a
+tag for the Recovery tab. A `legs sore` line in the gym log counts too. If you
+log alcohol in Garmin Connect's lifestyle logging, it's picked up automatically;
+alcohol last night, or on 3 of the last 7 evenings, is flagged. Late training,
 travel and tournament days are detected from your activities.
+
+**Gym sets per body part.** Garmin's load is heart-rate based and barely counts
+lifting, so the Load & injury tab also counts hard sets (70%+ of that day's top
+weight for the lift) per body part per week from the gym log, and flags a body
+part at 1.5× its 4-week average (2× is high) once the log has four weeks in it.
+A lift you haven't done for two weeks (`injury.break_days`) restarts 10% lighter,
+15% after four weeks, and the first session back is flagged.
 
 ## Run it locally
 

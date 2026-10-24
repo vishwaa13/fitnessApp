@@ -31,7 +31,32 @@ PAIN_AFFECTS = {
     "ankle": ["calf raise", "jump", "step up", "lunge", "split squat", "squat"],
     "neck": ["shoulder press", "ohp", "shrug", "deadlift"],
     "trap": ["shoulder press", "ohp", "shrug", "deadlift"],
+    "legs": ["squat", "lunge", "split squat", "step up", "leg press", "leg extension", "deadlift", "dl", "rdl",
+             "leg curl", "hamstring curl", "nordic", "hip thrust", "calf raise", "jump", "clean"],
+    "arms": ["bicep", "biceps", "hammer curl", "barbell curl", "extension", "pushdown", "dip", "bench", "press",
+             "pull up", "chin up", "row"],
+    "core": ["crunch", "leg raise", "dragon flag", "plank", "ab wheel"],
 }
+
+# Which body parts each lift trains, for weekly hard sets. First match wins,
+# so specific names come before generic ones ("hamstring curl" before "curl").
+LIFT_BODY_PARTS = [
+    [["incline", "bench", "push up", "dip", "chest press", "fly"], ["chest", "shoulder", "tricep"]],
+    [["shoulder press", "ohp", "overhead press", "military press", "arnold"], ["shoulder", "tricep"]],
+    [["lateral raise", "front raise", "rear delt", "face pull"], ["shoulder"]],
+    [["pull up", "chin up", "pulldown", "vertical", "lat pull"], ["back", "bicep"]],
+    [["row"], ["back", "bicep"]],
+    [["nordic", "hamstring curl", "leg curl"], ["hamstring"]],
+    [["rdl", "romanian", "deadlift", "dl", "good morning"], ["hamstring", "glute", "lower back"]],
+    [["clean", "snatch"], ["quad", "glute", "hamstring", "lower back"]],
+    [["hip thrust", "glute bridge"], ["glute"]],
+    [["calf raise"], ["calf"]],
+    [["squat", "lunge", "step up", "leg press"], ["quad", "glute"]],
+    [["leg extension"], ["quad"]],
+    [["crunch", "leg raise", "dragon flag", "plank", "sit up", "ab wheel"], ["core"]],
+    [["curl"], ["bicep"]],
+    [["pushdown", "skull", "tricep"], ["tricep"]],
+]
 
 DEFAULTS: dict[str, Any] = {
     "timezone": "Europe/Rome",
@@ -100,6 +125,16 @@ DEFAULTS: dict[str, Any] = {
         "monotony_caution": 2.0,
         "pain_hold_days": 14,
         "pain_affects": PAIN_AFFECTS,
+        "break_days": 14,
+        "lift_body_parts": LIFT_BODY_PARTS,
+        "hard_set_fraction": 0.7,
+        "volume_min_sets": 8,
+        "volume_ratio_caution": 1.5,
+        "volume_ratio_high": 2.0,
+        "weekly_sets_caution": 20,
+        "volume_ignore": ["core"],     # shown in the table, never flagged
+        "soreness_flag_score": 3,
+        "alcohol_nights_caution": 3,
         "history": [],
     },
 }

@@ -9,8 +9,8 @@ every run.
 from __future__ import annotations
 
 import logging
-import re
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -77,21 +77,30 @@ def _humanize(code: str | None) -> str:
     return re.sub(r"\bhrv\b", "HRV", text, flags=re.I)
 
 
+LIFESTYLE_VERSION = 2   # bump to re-read stored days after changing lifestyle_tags()
+_NAME_KEYS = ("behaviorName", "name", "displayName", "behavior", "behaviorType", "subTypeName", "category")
+_AMOUNT_KEYS = {"amount", "quantity", "count", "value", "totalamount", "servings"}
+_ALCOHOL = re.compile(r"alcohol|beer|wine|spirit|liquor|cocktail|drink", re.I)
+
+
 def lifestyle_tags(data: Any) -> list[str]:
     """Pull 'yes' behaviours (alcohol, caffeine, ...) out of Garmin's lifestyle log.
 
     The payload shape isn't documented, so walk it looking for named entries
-    that were logged as yes / with an amount."""
+    logged as yes (any "...status" field) or with an amount. Beer, wine and
+    the like all count as alcohol."""
     tags: set[str] = set()
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
-            name = node.get("name") or node.get("behaviorName") or node.get("behavior") or node.get("category")
-            status = str(node.get("status") or node.get("answer") or node.get("value") or "").upper()
-            amount = node.get("amount") or node.get("quantity") or node.get("count")
-            if isinstance(name, str) and (status in {"YES", "TRUE", "1"} or (isinstance(amount, (int, float)) and amount > 0)):
+            name = next((node[k] for k in _NAME_KEYS if isinstance(node.get(k), str) and node[k].strip()), None)
+            status = next((str(v).upper() for k, v in node.items()
+                           if k.lower().endswith("status") or k.lower() in {"answer", "logged"}), "")
+            amount = next((v for k, v in node.items() if k.lower() in _AMOUNT_KEYS
+                           and isinstance(v, (int, float)) and not isinstance(v, bool)), None)
+            if name and (status in {"YES", "TRUE", "1", "LOGGED"} or (amount is not None and amount > 0)):
                 slug = name.strip().lower().replace(" ", "_")
-                tags.add("alcohol" if "alcohol" in slug else slug)
+                tags.add("alcohol" if _ALCOHOL.search(slug) else slug)
             for v in node.values():
                 walk(v)
         elif isinstance(node, list):
@@ -100,6 +109,19 @@ def lifestyle_tags(data: Any) -> list[str]:
 
     walk(data)
     return sorted(tags)
+
+
+def payload_keys(data: Any, prefix: str = "") -> set[str]:
+    """Field names only (no values), to debug an unknown payload in public logs."""
+    keys: set[str] = set()
+    if isinstance(data, dict):
+        for k, v in data.items():
+            keys.add(prefix + k)
+            keys |= payload_keys(v, prefix + k + ".")
+    elif isinstance(data, list):
+        for v in data[:3]:
+            keys |= payload_keys(v, prefix)
+    return keys
 
 
 def normalize_day(day: date, hrv: Any, sleep: Any, readiness: Any, summary: Any, lifestyle: Any) -> dict:
@@ -229,17 +251,30 @@ class GarminSource:
             if stale:
                 todo.append(day)
             day -= timedelta(days=1)
+        lifestyle: list[Any] = []
         for day in todo[:max_days]:
             ds = day.isoformat()
+            lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
             store[ds] = normalize_day(
                 day,
                 self._call(self.api.get_hrv_data, ds),
                 self._call(self.api.get_sleep_data, ds),
                 self._call(self.api.get_training_readiness, ds),
                 self._call(self.api.get_user_summary, ds),
-                self._call(self.api.get_lifestyle_logging_data, ds),
+                lifestyle[-1],
             )
             fetched[ds] = _utcnow().isoformat()
+        if self.cache.get("lifestyle_version") != LIFESTYLE_VERSION:
+            # Days stored before the parser changed: read their lifestyle log again, once.
+            fresh = {x.isoformat() for x in todo[:max_days]}
+            for ds in sorted((k for k in store if k not in fresh), reverse=True)[:60]:
+                lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
+                store[ds]["lifestyle_tags"] = lifestyle_tags(lifestyle[-1])
+            self.cache["lifestyle_version"] = LIFESTYLE_VERSION
+        if any(lifestyle) and not any(lifestyle_tags(x) for x in lifestyle):
+            keys = set().union(*(payload_keys(x) for x in lifestyle if x))
+            log.info("Garmin lifestyle log has entries but none read as logged; fields: %s",
+                     ", ".join(sorted(keys))[:600])
         for key in [k for k in store if k < since.isoformat()]:
             store.pop(key, None)
             fetched.pop(key, None)

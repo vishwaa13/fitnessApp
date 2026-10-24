@@ -4,7 +4,9 @@ Double progression: each lift has a rep range (say 6-10). Keep the weight
 until every working set reaches the top of the range, then add weight and
 drop back to the bottom. Two sessions in a row below the bottom of the range
 at the same weight trigger a 10% deload. A pain note in the gym log backs off
-the lifts that load that body part by 10% until the pain window has passed.
+the lifts that load that body part by 10% until the pain window has passed,
+and a lift you haven't done for ``break_days`` restarts 10% lighter (15%
+after four weeks).
 """
 
 from __future__ import annotations
@@ -124,15 +126,30 @@ def progress(history: list[dict], rep_range: list[int], increment: float) -> dic
             "note": "Same weight, one more rep on each set."}
 
 
-def back_off_for_pain(history: list[dict], rep_range: list[int], increment: float, report: dict) -> dict[str, Any]:
+def _short(day: date) -> str:
+    return f"{day.day} {day:%b}"
+
+
+def _back_off(history: list[dict], rep_range: list[int], increment: float, factor: float,
+              action: str, note: str) -> dict[str, Any]:
     work = _working_sets(history[-1]["sets"], rep_range[0])
     weight = work[0]["w"]
     n = len(work)
-    new_w = _round_to(weight * 0.9, increment) if weight else None
-    when, until = (f"{x.day} {x:%b}" for x in (d(report["date"]), d(report["until"])))
-    return {"weight": new_w, "sets": n, "reps": [rep_range[0]] * n, "action": "pain",
-            "note": f"{report['label']} on {when}. 10% lighter, pain-free reps only, until {until}. "
-                    "Still hurting? Skip it and get it checked."}
+    new_w = _round_to(weight * factor, increment) if weight else None
+    return {"weight": new_w, "sets": n, "reps": [rep_range[0]] * n, "action": action, "note": note}
+
+
+def back_off_for_pain(history: list[dict], rep_range: list[int], increment: float, report: dict) -> dict[str, Any]:
+    return _back_off(history, rep_range, increment, 0.9, "pain",
+                     f"{report['label']} on {_short(d(report['date']))}. 10% lighter, pain-free reps only, "
+                     f"until {_short(d(report['until']))}. Still hurting? Skip it and get it checked.")
+
+
+def back_off_after_break(history: list[dict], rep_range: list[int], increment: float, gap: int) -> dict[str, Any]:
+    pct = 15 if gap >= 28 else 10
+    return _back_off(history, rep_range, increment, 1 - pct / 100, "return",
+                     f"Last done {_short(d(history[-1]['date']))}, {gap} days ago. Start {pct}% lighter "
+                     "and build back over two sessions.")
 
 
 def _signature(session: Session) -> set[str]:
@@ -168,7 +185,8 @@ def template_name(members: list[Session]) -> str:
     return " + ".join(names) if names else "Session"
 
 
-def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict] | None = None) -> dict[str, Any]:
+def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict] | None = None,
+               break_days: int | None = None) -> dict[str, Any]:
     """Next-session targets for every recently used workout template."""
     by_lift: dict[str, list[dict]] = {}
     display: dict[str, str] = {}
@@ -212,8 +230,11 @@ def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict]
             # Every session of the lift counts, whichever workout it was in.
             hist = lift["_hist"]
             nxt = progress(hist, lift["rep_range"], lift["increment"])
+            gap = (today - d(hist[-1]["date"])).days
             if report := pain_hits(lift["name"], pain or []):
                 nxt = back_off_for_pain(hist, lift["rep_range"], lift["increment"], report)
+            elif break_days and gap >= break_days:
+                nxt = back_off_after_break(hist, lift["rep_range"], lift["increment"], gap)
             exercises.append({
                 "name": lift["name"], "key": e.key, "rep_range": lift["rep_range"],
                 "last": {"date": hist[-1]["date"], "sets": hist[-1]["sets"]},

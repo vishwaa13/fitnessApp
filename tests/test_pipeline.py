@@ -170,6 +170,11 @@ def test_garmin_normalisers():
     assert (row["hrv"], row["hrv_low"], row["sleep_score"], row["sleep_hours"], row["readiness"], row["rhr"]) == (48, 54, 61, 6.25, 31, 52)
     assert row["readiness_feedback"] == "Low HRV"
     assert lifestyle_tags({"dailyLogs": [{"name": "Alcohol", "status": "YES"}, {"name": "Caffeine", "status": "NO"}]}) == ["alcohol"]
+    # Other plausible shapes: "logStatus", and amounts of beer/wine in sub-entries.
+    assert lifestyle_tags({"dailyLogsReport": [{"name": "Alcohol", "logStatus": "YES",
+                                                "details": [{"subTypeName": "BEER", "amount": 2}]}]}) == ["alcohol"]
+    assert lifestyle_tags({"logs": [{"subTypeName": "WINE", "amount": 1}]}) == ["alcohol"]
+    assert lifestyle_tags({"logs": [{"name": "Alcohol", "logStatus": "NO", "amount": 0}]}) == []
 
 
 def test_calendar_errors_are_explained_without_the_calendar_id():
@@ -188,3 +193,30 @@ def test_calendar_errors_are_explained_without_the_calendar_id():
     off = describe_error(err(403, "accessNotConfigured", "Google Calendar API has not been used in project 12"))
     assert "turn on the Google Calendar API" in off
     assert "not valid JSON" in describe_error(json.JSONDecodeError("x", "{", 0))
+
+
+def test_garmin_rereads_stored_lifestyle_logs_once(monkeypatch, caplog):
+    from fitapp.sources import garmin as g
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    today = date(2026, 10, 24)
+    old = (today - timedelta(days=20)).isoformat()
+
+    class Api:
+        lifestyle_calls = []
+
+        def get_lifestyle_logging_data(self, ds):
+            self.lifestyle_calls.append(ds)
+            return {"dailyLogsReport": [{"name": "Alcohol", "logStatus": "YES" if ds == old else "NO"}]}
+
+        def __getattr__(self, name):
+            return lambda *a: None
+
+    cache = {"daily": {old: {"date": old, "hrv": 50, "sleep_score": 70, "lifestyle_tags": []}},
+             "daily_fetched": {old: "2026-10-05T06:00:00"}}
+    src = g.GarminSource(cache)
+    src.api = Api()
+    store = src.daily(today - timedelta(days=30), today)
+    assert store[old]["lifestyle_tags"] == ["alcohol"] and cache["lifestyle_version"] == g.LIFESTYLE_VERSION
+    n = len(Api.lifestyle_calls)
+    src.daily(today - timedelta(days=30), today)
+    assert old not in Api.lifestyle_calls[n:]          # only once

@@ -137,6 +137,19 @@ injury:
   # risk for this many days and backs off the lifts that load that body part.
   # The body part -> lifts map is pain_affects in fitapp/config.py; override it here.
   pain_hold_days: 14
+  # A lift not done for this many days restarts 10% lighter (15% after four weeks),
+  # and the first session back for a body part is flagged.
+  break_days: 14
+  # Weekly hard sets per body part (sets at 70%+ of that day's top weight for the lift).
+  # Flagged when this week is 1.5x your 4-week average (2x is high) with at least
+  # 8 sets, or above 20 sets. The lift -> body part map is lift_body_parts in fitapp/config.py.
+  volume_ratio_caution: 1.5
+  volume_ratio_high: 2.0
+  weekly_sets_caution: 20
+  # Soreness from the "recovery tags" note ("24/10 shoulder 2/5, legs sore"):
+  # 3/5 is flagged, 4/5 and up counts as pain.
+  soreness_flag_score: 3
+  alcohol_nights_caution: 3      # evenings in 7 (Garmin lifestyle log + recovery tags)
   # Past injuries. The dashboard shows what your load looked like before each one.
   history: []
   #  - {date: 2026-07-14, label: "Glute strain"}

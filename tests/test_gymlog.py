@@ -2,7 +2,8 @@ from datetime import date
 
 import pytest
 
-from fitapp.gymlog import parse_date_line, parse_exercise_line, parse_gym_log, parse_tags_note
+from fitapp.gymlog import (parse_date_line, parse_exercise_line, parse_gym_log, parse_soreness,
+                           parse_tags_note, soreness_entry)
 
 TODAY = date(2026, 10, 1)
 
@@ -153,8 +154,34 @@ Pull ups -
 
 
 def test_session_with_only_a_pain_note_is_kept():
-    s, = parse_gym_log("2/10\nLower back sore after cleans", today=TODAY)
+    s, = parse_gym_log("2/10\nLower back pain after cleans", today=TODAY)
     assert s.notes[0]["body_part"] == "lower back" and s.notes[0]["side"] is None
+
+
+def test_sore_lines_in_the_gym_log_are_soreness_not_pain():
+    s, = parse_gym_log("30/09\nSquat 3x5 100\nLegs sore from frisbee", today=TODAY)
+    assert s.notes == [] and s.soreness[0]["body_part"] == "legs" and s.soreness[0]["score"] == 2
+
+
+@pytest.mark.parametrize("text,part,side,score", [
+    ("shoulder 2/5", "shoulder", None, 2),
+    ("quads 7/10", "quad", None, 3.5),
+    ("left knee 3", "knee", "left", 3),
+    ("hamstrings ok", "hamstring", None, 0),
+    ("shoulder very sore", "shoulder", None, 3),
+    ("right knee pain", "knee", "right", 4),
+])
+def test_soreness_entries(text, part, side, score):
+    e = soreness_entry(text)
+    assert (e["body_part"], e["side"], e["score"]) == (part, side, score)
+
+
+def test_soreness_note_and_tags_share_lines():
+    note = "29/09 shoulder 2/5, legs sore, alcohol\n30/09 back from the airport, travel"
+    sore = parse_soreness(note, today=TODAY)
+    assert [(e["date"], e["body_part"]) for e in sore] == [("2026-09-29", "shoulder"), ("2026-09-29", "legs")]
+    assert parse_tags_note(note, today=TODAY)["2026-09-29"] == ["alcohol"]
+    assert "travel" in parse_tags_note(note, today=TODAY)["2026-09-30"]   # "back" alone isn't soreness
 
 
 def test_keys_ignore_word_order_and_plurals_and_follow_aliases():

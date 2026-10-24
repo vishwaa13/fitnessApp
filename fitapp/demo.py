@@ -148,11 +148,17 @@ def build(cfg: dict, now: datetime | None = None) -> dict:
 
     tags_text = "\n".join(f"{d.strftime('%d/%m')} alcohol" for d in sorted(alcohol_days)
                           if d >= today - timedelta(days=300))
+    # A fortnight of soreness lines, the way you'd jot them in the morning.
+    sore = {9: "shoulder 3/5", 8: "shoulder 2/5, legs sore", 6: "shoulder 2/5", 5: "hamstrings 2/5",
+            3: "hamstrings 3/5, calves tight", 2: "hamstrings 2/5", 1: "shoulder ok, hamstrings 2/5"}
+    tags_text += "\n" + "\n".join(f"{(today - timedelta(days=k)).strftime('%d/%m')} {v}" for k, v in sore.items())
 
     events = _calendar(today, tz)
     upcoming = _upcoming(events, cfg, today)
+    from .gymlog import parse_soreness
     data = analyze(activities=acts, daily=daily, gym_text=_gym_log(today, rng), manual_tags=_tags(tags_text, today),
                    cfg=cfg, now=now, calendar_events=events, upcoming_events=upcoming,
+                   soreness=parse_soreness(tags_text, today),
                    sources={"garmin": "demo", "keep": "demo", "calendar": "demo"})
     data["demo"] = True
     for t in data["overload"]["templates"]:

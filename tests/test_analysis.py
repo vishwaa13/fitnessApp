@@ -127,7 +127,11 @@ def _pain(day, label="Left shoulder pain", part="shoulder"):
     from fitapp.gymlog import Session
     s = Session(date=day, notes=[{"text": "Left shoulder pain, stopped", "body_part": part, "side": "left",
                                   "exercise": "Incline dumbbell bench press", "stopped": True}])
-    return injury.pain_reports([s], CFG["injury"], TODAY)
+    return injury.Signals(pain=injury.pain_reports([s], CFG["injury"], TODAY))
+
+
+def _flags(res):
+    return {f["key"]: (f["level"], f["text"]) for f in res["current"]["flags"]}
 
 
 def test_recent_pain_makes_risk_high_then_caution_then_clears():
@@ -143,3 +147,73 @@ def test_pain_from_the_gym_log_becomes_injury_history():
     res = injury.build([], [], CFG["injury"], TODAY, _pain(TODAY - timedelta(days=30)))
     assert [(h["label"], h["source"]) for h in res["history"]] == [("Left shoulder pain", "gym log")]
     assert res["pain"][0]["active"] is False
+
+
+def _log(*lines):
+    from fitapp.gymlog import parse_gym_log
+    return parse_gym_log("\n".join(lines), today=TODAY, set_format="weight_x_reps")
+
+
+def test_hard_sets_skip_warm_ups_and_map_to_body_parts():
+    from fitapp import gymload
+    s, = _log("30/09", "Squats", "60 X 10", "80 X 10", "100 X 4", "Bench press 70 x 8, 70 x 7", "Pull ups 0 X 5")
+    sets = gymload.daily_sets([s], CFG["injury"])
+    day = date(2026, 9, 30)
+    assert sets["quad"][day] == 2 and sets["glute"][day] == 2        # 60 kg warm-up doesn't count
+    assert sets["chest"][day] == 2 and sets["tricep"][day] == 2 and sets["back"][day] == 1
+
+
+def test_gym_volume_spike_is_flagged():
+    from fitapp import gymload
+    lines = []
+    for k in (34, 27, 20, 13):                 # easy weeks: 3 bench sets
+        lines += [(TODAY - timedelta(days=k)).strftime("%d/%m"), "Bench press 70 x 8, 70 x 8, 70 x 8"]
+    for k in (5, 3, 1):                        # this week: 4 sets three times
+        lines += [(TODAY - timedelta(days=k)).strftime("%d/%m"), "Bench press 70 x 8, 70 x 8, 70 x 8, 70 x 8"]
+    sets = gymload.daily_sets(_log(*lines), CFG["injury"])
+    res = injury.build([], [], CFG["injury"], TODAY, injury.Signals(sets=sets))
+    level, text = _flags(res)["volume"]
+    assert level == "high" and text.startswith("Chest: 12 hard sets this week, 2.3×")
+
+
+def test_no_volume_flag_until_the_log_has_four_weeks():
+    from fitapp import gymload
+    lines = []
+    for k in (12, 5, 3, 1):
+        lines += [(TODAY - timedelta(days=k)).strftime("%d/%m"), "Bench press 70 x 8, 70 x 8, 70 x 8, 70 x 8"]
+    sets = gymload.daily_sets(_log(*lines), CFG["injury"])
+    assert "volume" not in _flags(injury.build([], [], CFG["injury"], TODAY, injury.Signals(sets=sets)))
+
+
+def test_first_session_after_a_break_is_flagged_and_restarts_lighter():
+    from fitapp import gymload, overload
+    sessions = _log("05/09", "Bench press 70 x 8, 70 x 8", "29/09", "Squats 100 x 5")
+    sets = gymload.daily_sets(sessions, CFG["injury"])
+    res = injury.build([], [], CFG["injury"], TODAY, injury.Signals(sets=sets))
+    assert "return" not in _flags(res)       # squats on 29/09 were the first ever, not a return
+    sessions = _log("05/09", "Bench press 70 x 8, 70 x 8", "29/09", "Bench press 70 x 8")
+    sets = gymload.daily_sets(sessions, CFG["injury"])
+    level, text = _flags(injury.build([], [], CFG["injury"], TODAY, injury.Signals(sets=sets)))["return"]
+    assert text.startswith("29 Sep was your first chest/shoulder/tricep session in 24 days")
+    plan = overload.build_plan(_log("05/09", "Bench press 70 x 8, 70 x 8"), CFG["overload"], TODAY, [], 14)
+    nxt = plan["templates"][0]["exercises"][0]["next"]
+    assert nxt["action"] == "return" and nxt["weight"] == 62.5 and "26 days ago" in nxt["note"]
+
+
+def test_soreness_flags_and_bad_soreness_counts_as_pain():
+    sore = [{"date": (TODAY - timedelta(days=1)).isoformat(), "body_part": "hamstring", "side": None,
+             "score": 3, "text": "hamstrings 3/5"}]
+    assert _flags(injury.build([], [], CFG["injury"], TODAY, injury.Signals(soreness=sore)))["soreness"] == \
+        ("caution", "Hamstring soreness 3/5 yesterday")
+    sore[0]["score"] = 4
+    pain = injury.pain_reports([], CFG["injury"], TODAY, sore)
+    assert pain[0]["label"] == "Hamstring soreness 4/5" and pain[0]["active"]
+
+
+def test_alcohol_flags():
+    last_night = {TODAY - timedelta(days=1)}
+    assert _flags(injury.build([], [], CFG["injury"], TODAY, injury.Signals(alcohol=last_night)))["alcohol"][1] \
+        .startswith("Alcohol last night")
+    week = {TODAY - timedelta(days=k) for k in (2, 4, 6)}
+    res = injury.build([], [], CFG["injury"], TODAY, injury.Signals(alcohol=week))
+    assert _flags(res)["alcohol"][1] == "Alcohol on 3 of the last 7 evenings" and res["current"]["alcohol_7"] == 3

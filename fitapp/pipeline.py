@@ -12,9 +12,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import cache as cache_mod
-from . import injury, overload, readiness, recovery, tournaments
+from . import gymload, injury, overload, readiness, recovery, tournaments
 from .crypto import encrypt_json
-from .gymlog import Session, parse_gym_log, parse_tags_note
+from .gymlog import Session, parse_gym_log, parse_soreness, parse_tags_note
 from .util import d, has_keyword
 
 log = logging.getLogger(__name__)
@@ -73,7 +73,8 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             manual_tags: dict[str, list[str]], cfg: dict, now: datetime,
             calendar_events: list[dict] | None, sources: dict[str, str],
             profile_max_hr: float | None = None,
-            upcoming_events: list[dict] | None = None) -> dict[str, Any]:
+            upcoming_events: list[dict] | None = None,
+            soreness: list[dict] | None = None) -> dict[str, Any]:
     today = now.date()
     activities = sorted((dict(a) for a in activities), key=lambda a: a["start"])
     daily = sorted(daily, key=lambda r: r["date"])
@@ -92,8 +93,11 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
 
     ov = cfg["overload"]
     sessions = parse_sessions(gym_text, today, ov)
-    pain = injury.pain_reports(sessions, cfg["injury"], today)
-    plan = overload.build_plan(sessions, ov, today, pain)
+    soreness = sorted((soreness or []) + [{"date": s.date.isoformat(), **e} for s in sessions for e in s.soreness],
+                      key=lambda e: e["date"])
+    sets = gymload.daily_sets(sessions, cfg["injury"])
+    pain = injury.pain_reports(sessions, cfg["injury"], today, soreness, sets)
+    plan = overload.build_plan(sessions, ov, today, pain, int(cfg["injury"]["break_days"]))
     plan["unparsed"] = [{"date": s.date.isoformat(), "lines": s.unparsed} for s in sessions[-10:] if s.unparsed]
     plan["recent_sessions"] = [s.to_dict() for s in sessions[-8:]][::-1]
 
@@ -101,7 +105,9 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
                                  cfg["injury"]["high_day_load"])
     rec = recovery.analyse(daily, tags, int(cfg["recovery"]["window_days"]), today)
 
-    inj = injury.build(activities, daily, cfg["injury"], today, pain)
+    alcohol = {day for day, items in tags.items() if "alcohol" in items}
+    inj = injury.build(activities, daily, cfg["injury"], today,
+                       injury.Signals(pain=pain, sets=sets, soreness=soreness, alcohol=alcohol))
 
     by_date = {r["date"]: r for r in daily}
     today_row = by_date.get(today.isoformat())
@@ -195,13 +201,14 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     daily = list((state.get("daily") or {}).values())
 
     # --- Keep ---------------------------------------------------------------
-    gym_text, manual_tags = None, {}
+    gym_text, manual_tags, soreness = None, {}, []
     keep = KeepSource()
     if keep.configured:
         try:
             gym_text = keep.notes_text(cfg["overload"]["keep_note_title"])
             tags_text = keep.notes_text(cfg["recovery"]["keep_tags_note_title"])
             manual_tags = parse_tags_note(tags_text, today, cfg["overload"]["date_order"]) if tags_text else {}
+            soreness = parse_soreness(tags_text, today, cfg["overload"]["date_order"]) if tags_text else []
             sources["keep"] = "ok" if gym_text else "note not found"
         except Exception as exc:  # noqa: BLE001
             log.error("Keep failed: %s", type(exc).__name__)
@@ -256,14 +263,13 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
 
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
-                   upcoming_events=upcoming)
+                   upcoming_events=upcoming, soreness=soreness)
     data["travel"] = other_flights
     if gym_text:
         ov_out = data["overload"]
-        log.info("Gym log: %d sessions (last %s), %d unreadable lines, %d active pain notes",
-                 ov_out["sessions_logged"], ov_out["last_session"],
-                 sum(len(u["lines"]) for u in ov_out["unparsed"]),
-                 sum(p["active"] for p in data["injury"]["pain"]))
+        # The repo's Actions logs are public: counts only, no health details.
+        log.info("Gym log: %d sessions, %d unreadable lines", ov_out["sessions_logged"],
+                 sum(len(u["lines"]) for u in ov_out["unparsed"]))
 
     # --- Act: calendar swaps ------------------------------------------------
     mode = cfg["readiness"]["mode"]
