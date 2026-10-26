@@ -165,10 +165,25 @@
   // ---------- Today ----------
   function renderToday(panel) {
     const d = DATA, t = d.today;
-    const strip = h("div", { class: "strip", role: "list", "aria-label": "Last 14 mornings" },
-      t.strip.map((s, i) => h("div", { class: "strip-cell" + (i === t.strip.length - 1 ? " today" : ""), role: "listitem", title: `${day(s.date)}: ${s.status}` },
-        h("span", { class: "strip-dot " + s.status, "aria-label": s.status }, STATUS_MARK[s.status]),
-        h("span", null, C.parseDay(s.date).toLocaleDateString(undefined, { weekday: "narrow" })))));
+    // Each morning is a button: picking one shows why it got its colour and what you did.
+    const detail = h("div", { class: "day-detail", "aria-live": "polite" });
+    const cells = t.strip.map((s, i) => h("button", {
+      type: "button", class: "strip-cell" + (i === t.strip.length - 1 ? " today" : ""),
+      "aria-label": `${day(s.date)}: ${STATUS_WORD[s.status]}. Show details`, title: `${day(s.date)}: ${STATUS_WORD[s.status]}`,
+      onclick: () => pick(i),
+      onkeydown: e => {
+        const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+        if (step && cells[i + step]) { e.preventDefault(); cells[i + step].focus(); pick(i + step); }
+      },
+    },
+      h("span", { class: "strip-dot " + s.status, "aria-hidden": "true" }, STATUS_MARK[s.status]),
+      h("span", { "aria-hidden": "true" }, C.parseDay(s.date).toLocaleDateString(undefined, { weekday: "narrow" }))));
+    const strip = h("div", { class: "strip", role: "group", "aria-label": "Last 14 mornings" }, cells);
+    function pick(i) {
+      cells.forEach((c, j) => c.setAttribute("aria-pressed", j === i ? "true" : "false"));
+      detail.replaceChildren(...dayDetail(t.strip[i]));
+    }
+    pick(t.strip.length - 1);
     const counts = t.strip.reduce((a, s) => ((a[s.status] = (a[s.status] || 0) + 1), a), {});
 
     panel.append(h("div", { class: "grid2" },
@@ -179,8 +194,41 @@
       return h("section", { class: "card" },
         h("div", { class: "card-head" }, h("h2", null, "Last two weeks"),
           h("span", { class: "small muted" }, `${counts.green || 0} green · ${counts.amber || 0} amber · ${counts.red || 0} red`)),
-        strip);
+        strip, h("p", { class: "small muted" }, "Tap a day to see why it got its colour."), detail);
     }
+  }
+  const SIGNAL_CHIP = { red: "Low", amber: "Watch", green: "Good" };
+  function activityLine(a) {
+    const bits = [timeOf(a.start), a.duration_min ? `${Math.round(a.duration_min)} min` : null,
+      a.distance_km ? `${fmt(a.distance_km, 1)} km` : null, a.avg_hr ? `avg ${Math.round(a.avg_hr)} bpm` : null].filter(Boolean);
+    return h("div", { class: "row" },
+      h("div", null, h("span", { class: "row-title" }, a.name || a.type), h("div", { class: "small muted" }, bits.join(" · "))),
+      a.load != null ? h("span", { class: "num small" }, `load ${Math.round(a.load)}${a.load_estimated ? " (est.)" : ""}`) : null);
+  }
+  function dayDetail(s) {
+    const out = [h("div", { class: "card-head" }, h("h3", null, day(s.date)), chip(s.status, STATUS_WORD[s.status])),
+      h("p", { class: "note" }, s.summary || "")];
+    if (s.signals && s.signals.length) {
+      out.push(h("h4", null, "Why"), h("div", { class: "rows" }, s.signals.map(sg => h("div", { class: "row" },
+        h("div", null, h("span", { class: "row-title" }, sg.label), " ", h("span", { class: "num" }, sg.display),
+          sg.detail ? h("div", { class: "small muted" }, sg.detail) : null),
+        chip(sg.level, SIGNAL_CHIP[sg.level] || sg.level)))));
+    }
+    const b = s.before || {};
+    const before = [b.tags && b.tags.length ? b.tags.join(", ") : null,
+      b.activities && b.activities.length ? b.activities.join(", ") + (b.load ? ` (load ${b.load})` : "") : null,
+      b.gym && b.gym.length ? "Gym: " + b.gym.join(", ") : null].filter(Boolean);
+    out.push(h("h4", null, "The day before"),
+      h("p", { class: "note" }, before.length ? before.join(" · ") : "Rest day, nothing tagged."),
+      h("p", { class: "small muted" }, "The morning colour comes from that night's sleep and HRV, so the day before is usually the cause."));
+    out.push(h("h4", null, "What you did that day"));
+    const did = [];
+    if (s.activities && s.activities.length) did.push(h("div", { class: "rows" }, s.activities.map(activityLine)));
+    if (s.gym && s.gym.length) did.push(h("div", { class: "rows" }, s.gym.map(g => h("div", { class: "row" },
+      h("span", { class: "row-title" }, g.name), h("span", { class: "num small muted" }, g.sets)))));
+    if (s.notes && s.notes.length) did.push(h("p", { class: "note" }, h("strong", null, "Noted: "), s.notes.join(" · ")));
+    out.push(...(did.length ? did : [h("p", { class: "note" }, "Nothing recorded: a rest day, or the watch hasn't synced it yet.")]));
+    return out;
   }
   function timeOf(v, allDay) {
     if (allDay || String(v).length <= 10) return "All day";

@@ -134,7 +134,12 @@ button, input, select { font: inherit; color: inherit; }
 
 /* Readiness strip */
 .strip { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 4px; }
-.strip-cell { display: grid; gap: 3px; justify-items: center; font-size: 0.7rem; color: var(--muted); }
+.strip-cell { display: grid; gap: 3px; justify-items: center; font-size: 0.7rem; color: var(--muted);
+              background: none; border: 0; padding: 4px 0; border-radius: 9px; cursor: pointer; min-width: 0; }
+.strip-cell:hover { background: var(--surface-2); }
+.strip-cell[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+.day-detail { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.day-detail h4 { margin: 4px 0 0; font-family: var(--font-display); font-size: 0.95rem; font-weight: 600; color: var(--ink-2); }
 .strip-dot { width: 100%; max-width: 34px; aspect-ratio: 1; border-radius: 7px; background: var(--surface-2); display: grid; place-items: center; font-weight: 700; font-size: 0.75rem; color: var(--bg); }
 .strip-dot.green { background: var(--good); }
 .strip-dot.amber { background: var(--warn); color: #3a2800; }

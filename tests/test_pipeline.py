@@ -220,3 +220,17 @@ def test_garmin_rereads_stored_lifestyle_logs_once(monkeypatch, caplog):
     n = len(Api.lifestyle_calls)
     src.daily(today - timedelta(days=30), today)
     assert old not in Api.lifestyle_calls[n:]          # only once
+
+
+
+def test_strip_days_explain_their_colour():
+    data = demo.build(load_config(), NOW)
+    strip = data["today"]["strip"]
+    assert len(strip) == 14 and strip[-1]["date"] == NOW.date().isoformat()
+    for s in strip:
+        assert {"summary", "signals", "activities", "gym", "notes", "before", "load"} <= set(s)
+        assert s["before"]["date"] < s["date"]
+    known = [s for s in strip if s["status"] != "unknown"]
+    assert known and all(s["signals"] for s in known)
+    assert any(s["activities"] for s in strip) and any(s["gym"] for s in strip)
+    assert any(s["before"]["tags"] for s in strip)

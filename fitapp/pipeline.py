@@ -69,6 +69,50 @@ def parse_sessions(gym_text: str | None, today: date, ov: dict) -> list[Session]
                          ov.get("set_format", "auto"), ov.get("aliases"))
 
 
+def _sets_text(sets: list[dict]) -> str:
+    return ", ".join(f"{x['w']:g}×{x['r']}" if x["w"] else f"BW×{x['r']}" for x in sets)
+
+
+def _strip(today: date, daily: list[dict], activities: list[dict], sessions: list[Session],
+           soreness: list[dict], tags: dict[date, set[str]], cfg: dict) -> list[dict]:
+    """The last 14 mornings, each with why it got its colour, what you did that
+    day, and what happened the day before (which usually explains the morning)."""
+    by_date = {r["date"]: r for r in daily}
+    acts: dict[str, list[dict]] = {}
+    for a in activities:
+        acts.setdefault(a["date"], []).append(a)
+    gym: dict[str, list[Session]] = {}
+    for s in sessions:
+        gym.setdefault(s.date.isoformat(), []).append(s)
+
+    def load(day: str) -> int:
+        return round(sum(a.get("load") or 0 for a in acts.get(day, [])))
+
+    def tag_names(day: str) -> list[str]:
+        return [recovery.TAG_LABELS.get(t, t.replace("_", " ").capitalize()) for t in sorted(tags.get(d(day), ()))]
+
+    out = []
+    for k in range(13, -1, -1):
+        day = (today - timedelta(days=k)).isoformat()
+        prev = (today - timedelta(days=k + 1)).isoformat()
+        v = readiness.assess(by_date.get(day), [r for r in daily if r["date"] < day], cfg["readiness"]["thresholds"])
+        out.append({
+            "date": day, "status": v["status"], "summary": v["summary"],
+            "signals": [{x: sg[x] for x in ("label", "level", "display", "detail")} for sg in v["signals"]],
+            "activities": [{x: a.get(x) for x in ("name", "type", "start", "duration_min", "distance_km", "avg_hr",
+                                                   "load", "load_estimated")} for a in acts.get(day, [])],
+            "load": load(day),
+            "gym": [{"name": e.name, "sets": _sets_text(e.sets)} for s in gym.get(day, []) for e in s.exercises],
+            "notes": [n["text"] for s in gym.get(day, []) for n in s.notes]
+                     + [f"{e['body_part'].capitalize()} " + (f"sore {e['score']:g}/5" if e["score"] else "fine")
+                        for e in soreness if e["date"] == day],
+            "before": {"date": prev, "load": load(prev), "tags": tag_names(prev),
+                       "activities": [a.get("name") or a.get("type") for a in acts.get(prev, [])],
+                       "gym": [e.name for s in gym.get(prev, []) for e in s.exercises]},
+        })
+    return out
+
+
 def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             manual_tags: dict[str, list[str]], cfg: dict, now: datetime,
             calendar_events: list[dict] | None, sources: dict[str, str],
@@ -113,11 +157,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
     today_row = by_date.get(today.isoformat())
     previous = [r for r in daily if r["date"] < today.isoformat()]
     verdict = readiness.assess(today_row, previous, cfg["readiness"]["thresholds"])
-    strip = []
-    for k in range(13, -1, -1):
-        day = (today - timedelta(days=k)).isoformat()
-        v = readiness.assess(by_date.get(day), [r for r in daily if r["date"] < day], cfg["readiness"]["thresholds"])
-        strip.append({"date": day, "status": v["status"]})
+    strip = _strip(today, daily, activities, sessions, soreness, tags, cfg)
 
     protected = protected_days(cfg, upcoming_events)
     swaps: list[dict] = []
