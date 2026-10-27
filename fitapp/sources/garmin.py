@@ -77,7 +77,7 @@ def _humanize(code: str | None) -> str:
     return re.sub(r"\bhrv\b", "HRV", text, flags=re.I)
 
 
-LIFESTYLE_VERSION = 2   # bump to re-read stored days after changing lifestyle_tags()
+LIFESTYLE_VERSION = 3   # bump to re-read stored days after changing lifestyle_tags()
 _NAME_KEYS = ("behaviorName", "name", "displayName", "behavior", "behaviorType", "subTypeName", "category")
 _AMOUNT_KEYS = {"amount", "quantity", "count", "value", "totalamount", "servings"}
 _ALCOHOL = re.compile(r"alcohol|beer|wine|spirit|liquor|cocktail|drink", re.I)
