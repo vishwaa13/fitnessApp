@@ -160,3 +160,16 @@ def test_no_connection_at_all_raises(monkeypatch):
     with pytest.raises(RuntimeError):
         src.connect()
     assert src.status["api"] == "key rejected"
+
+
+@pytest.mark.parametrize("raw", ["k3y", " k3y\n", '"k3y"', "[k3y]", "ApiKey k3y", "ApiKey [k3y]"])
+def test_key_pasted_with_the_docs_wrapping_still_works(raw):
+    assert PersonalApi(key=raw).key == "k3y"
+
+
+def test_token_failure_is_logged_with_status_and_message_but_not_the_key(caplog):
+    a = api(token=Resp(406, text="Not Acceptable for key k3y"))
+    with pytest.raises(RuntimeError, match="HTTP 406"):
+        a.connect()
+    assert "HTTP 406: Not Acceptable for key <key>" in caplog.text and "k3y" not in caplog.text
+    assert "Accept" not in a.session.headers[0]          # the documented request: Authorization only

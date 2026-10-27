@@ -34,6 +34,14 @@ class RateLimited(RuntimeError):
     pass
 
 
+def clean_key(raw: str | None) -> str:
+    """Tolerate a key pasted with the docs' wrapping: quotes, [brackets], an "ApiKey " prefix."""
+    key = (raw or "").strip().strip('"').strip("'").strip()
+    if key.lower().startswith("apikey "):
+        key = key[7:].strip()
+    return key.strip("[]<>").strip()
+
+
 def _token_from(resp: requests.Response) -> str | None:
     """The token endpoint's body isn't documented: accept the usual OAuth2 shapes or plain text."""
     try:
@@ -58,7 +66,7 @@ def _token_from(resp: requests.Response) -> str | None:
 
 class PersonalApi:
     def __init__(self, key: str | None = None, session: requests.Session | None = None, pause: float = 0.2):
-        self.key = (key or os.getenv("GARMIN_API_KEY") or "").strip()
+        self.key = clean_key(key or os.getenv("GARMIN_API_KEY"))
         self.session = session or requests.Session()
         self.token: str | None = None
         self.calls = 0
@@ -68,13 +76,21 @@ class PersonalApi:
     def configured(self) -> bool:
         return bool(self.key)
 
+    def _why(self, resp: requests.Response) -> str:
+        """Status and Garmin's message, with the key and any token blanked, for the (public) log."""
+        text = (getattr(resp, "text", "") or "").replace(self.key, "<key>") if self.key else ""
+        text = " ".join(text.split())[:200]
+        return f"HTTP {resp.status_code}" + (f": {text}" if text else "")
+
     def connect(self) -> None:
-        resp = self.session.post(BASE + TOKEN_PATH, headers={"Authorization": f"ApiKey {self.key}",
-                                                             "Accept": "application/json"}, timeout=30)
+        # Exactly the documented request: POST, no body, only the Authorization header.
+        resp = self.session.post(BASE + TOKEN_PATH, headers={"Authorization": f"ApiKey {self.key}"}, timeout=30)
         self.calls += 1
         if resp.status_code in (401, 403):
-            raise KeyRejected(f"HTTP {resp.status_code}")
-        resp.raise_for_status()
+            raise KeyRejected(self._why(resp))
+        if resp.status_code >= 400:
+            log.error("Garmin Personal API token request failed: %s", self._why(resp))
+            raise RuntimeError(f"HTTP {resp.status_code}")
         self.token = _token_from(resp)
         if not self.token:
             raise RuntimeError("no access token in the response")

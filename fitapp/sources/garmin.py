@@ -262,8 +262,9 @@ class GarminSource:
                 log.error("Garmin Personal API key was rejected (expired or deleted?). Create a new one on "
                           "Garmin Connect Web and update the GARMIN_API_KEY secret.")
             except Exception as exc:  # noqa: BLE001
-                self.status["api"] = f"error: {type(exc).__name__}"
-                log.error("Garmin Personal API failed: %s", type(exc).__name__)
+                detail = str(exc) if str(exc).startswith("HTTP") else type(exc).__name__
+                self.status["api"] = f"error: {detail}"
+                log.error("Garmin Personal API failed: %s", detail)
         try:
             self.login()
             self.status["login"] = "ok"
