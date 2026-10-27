@@ -124,6 +124,19 @@ def payload_keys(data: Any, prefix: str = "") -> set[str]:
     return keys
 
 
+def _local_time(ms: Any) -> str | None:
+    """Garmin's "...TimestampLocal" fields are your wall-clock time stored as epoch ms."""
+    if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
+
+def sleep_window(sleep: Any) -> tuple[str | None, str | None]:
+    """(fell asleep, woke up) as local "YYYY-MM-DDTHH:MM" for the night ending on this date."""
+    dto = (sleep or {}).get("dailySleepDTO") or {}
+    return _local_time(dto.get("sleepStartTimestampLocal")), _local_time(dto.get("sleepEndTimestampLocal"))
+
+
 def normalize_day(day: date, hrv: Any, sleep: Any, readiness: Any, summary: Any, lifestyle: Any) -> dict:
     hs = (hrv or {}).get("hrvSummary") or {}
     base = hs.get("baselineDTO") or hs.get("baseline") or {}
@@ -150,6 +163,8 @@ def normalize_day(day: date, hrv: Any, sleep: Any, readiness: Any, summary: Any,
         "bb_wake": summary.get("bodyBatteryAtWakeTime"),
         "stress": summary.get("averageStressLevel"),
         "lifestyle_tags": lifestyle_tags(lifestyle),
+        "bed": sleep_window(sleep)[0],
+        "wake": sleep_window(sleep)[1],
     }
 
 
@@ -264,9 +279,14 @@ class GarminSource:
                 lifestyle[-1],
             )
             fetched[ds] = _utcnow().isoformat()
+        fresh = {x.isoformat() for x in todo[:max_days]}
+        # Days stored before bedtimes were kept: read their sleep again, 40 a run, back 120 days.
+        older = [k for k in sorted(store, reverse=True) if "bed" not in store[k] and k not in fresh
+                 and (today - date.fromisoformat(k)).days <= 120][:40]
+        for ds in older:
+            store[ds]["bed"], store[ds]["wake"] = sleep_window(self._call(self.api.get_sleep_data, ds))
         if self.cache.get("lifestyle_version") != LIFESTYLE_VERSION:
             # Days stored before the parser changed: read their lifestyle log again, once.
-            fresh = {x.isoformat() for x in todo[:max_days]}
             for ds in sorted((k for k in store if k not in fresh), reverse=True)[:60]:
                 lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
                 store[ds]["lifestyle_tags"] = lifestyle_tags(lifestyle[-1])

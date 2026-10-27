@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import date, timedelta
 from typing import Any
 
+from . import sleep
 from .util import d, haversine_km, mean, parse_local, rnd
 
 TAG_LABELS = {
@@ -22,6 +23,7 @@ TAG_LABELS = {
     "travel": "Travel",
     "tournament": "Tournament day",
     "high_load": "Big training day",
+    "late_bed": "Late bedtime",
 }
 
 
@@ -40,6 +42,8 @@ def evening_tags(daily: list[dict], activities: list[dict], tournaments: list[di
     for row in daily:
         for t in row.get("lifestyle_tags") or []:
             add(d(row["date"]), t)
+    for day in sleep.late_bed_evenings(daily, int(cfg.get("late_bed_minutes", 60))):
+        add(day, "late_bed")
 
     load_by_day: dict[date, float] = {}
     for a in activities:

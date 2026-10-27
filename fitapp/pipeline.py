@@ -12,7 +12,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import cache as cache_mod
-from . import gymload, injury, overload, readiness, recovery, tournaments
+from . import gymload, injury, overload, readiness, recovery, sleep, tournaments, weekly
 from .crypto import encrypt_json
 from .gymlog import Session, parse_gym_log, parse_soreness, parse_tags_note
 from .util import d, has_keyword
@@ -69,13 +69,16 @@ def parse_sessions(gym_text: str | None, today: date, ov: dict) -> list[Session]
                          ov.get("set_format", "auto"), ov.get("aliases"))
 
 
+CALENDAR_DAYS = 112   # 16 weeks of mornings for the Month tab
+
+
 def _sets_text(sets: list[dict]) -> str:
     return ", ".join(f"{x['w']:g}×{x['r']}" if x["w"] else f"BW×{x['r']}" for x in sets)
 
 
-def _strip(today: date, daily: list[dict], activities: list[dict], sessions: list[Session],
-           soreness: list[dict], tags: dict[date, set[str]], cfg: dict) -> list[dict]:
-    """The last 14 mornings, each with why it got its colour, what you did that
+def _days(today: date, daily: list[dict], activities: list[dict], sessions: list[Session],
+          soreness: list[dict], tags: dict[date, set[str]], cfg: dict, n: int = 14) -> list[dict]:
+    """The last ``n`` mornings, each with why it got its colour, what you did that
     day, and what happened the day before (which usually explains the morning)."""
     by_date = {r["date"]: r for r in daily}
     acts: dict[str, list[dict]] = {}
@@ -92,7 +95,7 @@ def _strip(today: date, daily: list[dict], activities: list[dict], sessions: lis
         return [recovery.TAG_LABELS.get(t, t.replace("_", " ").capitalize()) for t in sorted(tags.get(d(day), ()))]
 
     out = []
-    for k in range(13, -1, -1):
+    for k in range(n - 1, -1, -1):
         day = (today - timedelta(days=k)).isoformat()
         prev = (today - timedelta(days=k + 1)).isoformat()
         v = readiness.assess(by_date.get(day), [r for r in daily if r["date"] < day], cfg["readiness"]["thresholds"])
@@ -157,7 +160,10 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
     today_row = by_date.get(today.isoformat())
     previous = [r for r in daily if r["date"] < today.isoformat()]
     verdict = readiness.assess(today_row, previous, cfg["readiness"]["thresholds"])
-    strip = _strip(today, daily, activities, sessions, soreness, tags, cfg)
+    days = _days(today, daily, activities, sessions, soreness, tags, cfg, n=CALENDAR_DAYS)
+    strip = days[-14:]
+    weeks = weekly.build(today, days, daily, activities, {x.date.isoformat() for x in sessions if x.exercises},
+                         sets, alcohol, inj.pop("flags_by_day"), float(cfg["injury"]["rest_day_load"]))
 
     protected = protected_days(cfg, upcoming_events)
     swaps: list[dict] = []
@@ -187,8 +193,9 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
                   "actions": swaps, "week": week},
         "tournaments": tourneys,
         "overload": plan,
-        "recovery": rec,
+        "recovery": {**rec, "bedtime": sleep.schedule(daily, today, 28, int(cfg["recovery"].get("late_bed_minutes", 60)))},
         "injury": inj,
+        "calendar": {"days": days, "weeks": weeks},
         "recent_activities": recent,
         "events": upcoming_events or [],
     })

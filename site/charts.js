@@ -216,6 +216,39 @@
     });
   }
 
+  /* One bar per night from falling asleep to waking. Values are minutes after
+     18:00, so the evening sits at the top and time runs down the chart. */
+  function ranges(el, o) {
+    const data = o.data;
+    el.replaceChildren();
+    if (!data.length) { el.textContent = "No sleep times yet."; return; }
+    const W = Math.max(280, el.clientWidth || 600), H = o.height || 220;
+    const left = 46, right = 14, top = 10, bottom = 24;
+    const plotW = W - left - right, plotH = H - top - bottom;
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, role: "img", "aria-label": o.label || "chart" }, el);
+    const lo = Math.floor((Math.min(...data.map(r => r.bed_m)) - 20) / 120) * 120;
+    const hi = Math.ceil((Math.max(...data.map(r => r.wake_m)) + 20) / 120) * 120;
+    const y = m => top + ((m - lo) / (hi - lo)) * plotH;
+    const clock = m => { const t = (m + 18 * 60) % 1440; return String(Math.floor(t / 60)).padStart(2, "0") + ":" + String(t % 60).padStart(2, "0"); };
+    for (let m = lo; m <= hi; m += 120) {
+      s("line", { x1: left, x2: W - right, y1: y(m), y2: y(m), class: "grid" }, svg);
+      text(svg, left - 6, y(m) + 4, clock(m), "ax", "end");
+    }
+    const n = data.length, band = plotW / n, bw = Math.max(2, Math.min(14, band - 2));
+    xTicks(n, plotW).forEach(i => text(svg, left + band * (i + 0.5), H - 6, fmtDay(data[i].date), "ax", "middle"));
+    if (o.refLine != null) {
+      s("line", { x1: left, x2: W - right, y1: y(o.refLine.y), y2: y(o.refLine.y), class: "ref" }, svg);
+      text(svg, W - right - 2, y(o.refLine.y) - 4, o.refLine.label, "ax ref-label", "end");
+    }
+    data.forEach((r, i) => {
+      const x0 = left + band * i + (band - bw) / 2, y0 = y(r.bed_m), y1 = y(r.wake_m);
+      const bar = s("rect", { x: x0, y: y0, width: bw, height: Math.max(2, y1 - y0), rx: Math.min(4, bw / 2), class: "rng" + (r.late ? " late" : "") }, svg);
+      const hit = s("rect", { x: left + band * i, y: top, width: band, height: plotH, fill: "transparent" }, svg);
+      hit.addEventListener("pointermove", e => { bar.classList.add("hover"); showTip(e, o.tip(r)); });
+      hit.addEventListener("pointerleave", () => { bar.classList.remove("hover"); hideTip(); });
+    });
+  }
+
   /* Horizontal diverging bars with an interval whisker per row. */
   function diverging(el, o) {
     const rows = o.rows;
@@ -284,5 +317,5 @@
     s("circle", { cx: x(last[0]), cy: y(last[1]), r: 3.5, class: "dot spark-dot" }, svg);
   }
 
-  window.Charts = { line, columns, diverging, spark, showTip, hideTip, fmtDay, fmtDayLong, parseDay };
+  window.Charts = { line, columns, ranges, diverging, spark, showTip, hideTip, fmtDay, fmtDayLong, parseDay };
 })();

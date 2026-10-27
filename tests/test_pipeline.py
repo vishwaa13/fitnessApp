@@ -234,3 +234,36 @@ def test_strip_days_explain_their_colour():
     assert known and all(s["signals"] for s in known)
     assert any(s["activities"] for s in strip) and any(s["gym"] for s in strip)
     assert any(s["before"]["tags"] for s in strip)
+
+
+
+def test_month_calendar_and_bedtimes_in_the_published_data():
+    data = demo.build(load_config(), NOW)
+    cal = data["calendar"]
+    assert len(cal["days"]) == pipeline.CALENDAR_DAYS and cal["days"][-14:] == data["today"]["strip"]
+    assert len(cal["weeks"]) == 8 and cal["weeks"][0]["start"] <= NOW.date().isoformat()
+    bed = data["recovery"]["bedtime"]
+    assert bed["n"] == 28 and bed["usual_bed"] and bed["nights"][0]["bed_m"] < bed["nights"][0]["wake_m"]
+    assert "late_bed" in data["recovery"]["tag_labels"]
+    assert "flags_by_day" not in data["injury"]          # used for the weeks, not published
+
+
+def test_garmin_backfills_bedtimes_for_stored_days(monkeypatch):
+    from fitapp.sources import garmin as g
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    today = date(2026, 10, 27)
+    old = (today - timedelta(days=30)).isoformat()
+
+    class Api:
+        def get_sleep_data(self, ds):
+            return {"dailySleepDTO": {"sleepStartTimestampLocal": 1761521460000, "sleepEndTimestampLocal": 1761548400000}}
+
+        def __getattr__(self, name):
+            return lambda *a: None
+
+    cache = {"daily": {old: {"date": old, "hrv": 50, "sleep_score": 70}}, "daily_fetched": {old: "2026-09-28T06:00:00"},
+             "lifestyle_version": g.LIFESTYLE_VERSION}
+    src = g.GarminSource(cache)
+    src.api = Api()
+    store = src.daily(today - timedelta(days=40), today)
+    assert (store[old]["bed"], store[old]["wake"]) == ("2025-10-26T23:31", "2025-10-27T07:00")

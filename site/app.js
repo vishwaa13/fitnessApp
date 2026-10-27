@@ -5,10 +5,11 @@
   const C = window.Charts;
   const app = document.getElementById("app");
   const PASS_KEY = "morningcheck.pass";
-  const TABS = [["today", "Today"], ["events", "Events"], ["recovery", "Recovery"], ["tournaments", "Tournaments"], ["strength", "Strength"], ["load", "Load & injury"]];
+  const TABS = [["today", "Today"], ["month", "Month"], ["events", "Events"], ["recovery", "Recovery"], ["tournaments", "Tournaments"], ["strength", "Strength"], ["load", "Load & injury"]];
   let DATA = null;
   let recRange = 90;
   let recMetric = "hrv";
+  let monthIdx = null, monthPick = null, weekIdx = null;
 
   // ---------- tiny DOM helper (strings always go in as text) ----------
   function h(tag, attrs, ...kids) {
@@ -142,7 +143,7 @@
     const tab = currentTab();
     document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", String(TABS[i][0] === tab)));
     panel.replaceChildren();
-    ({ today: renderToday, events: renderEvents, recovery: renderRecovery, tournaments: renderTournaments, strength: renderStrength, load: renderLoad })[tab](panel);
+    ({ today: renderToday, month: renderMonth, events: renderEvents, recovery: renderRecovery, tournaments: renderTournaments, strength: renderStrength, load: renderLoad })[tab](panel);
   }
   const go = id => h("a", { href: "#" + id }, "Open");
 
@@ -188,7 +189,7 @@
 
     panel.append(h("div", { class: "grid2" },
       h("div", { class: "stack" }, calendarCard(t), stripCard()),
-      h("div", { class: "stack" }, injurySummary(d.injury), strengthSummary(d.overload), latestTournament(d.tournaments))));
+      h("div", { class: "stack" }, reviewOnToday(d), injurySummary(d.injury), strengthSummary(d.overload), latestTournament(d.tournaments))));
 
     function stripCard() {
       return h("section", { class: "card" },
@@ -387,6 +388,7 @@
         h("div", { class: "legend" }, h("span", null, h("i", { style: "background:var(--accent)" }), "HRV (ms)"), h("span", null, h("i", { class: "box", style: "background:var(--accent)" }), "Garmin baseline band")),
         hrvChart),
       h("section", { class: "card" }, h("h2", null, "Sleep score"), sleepChart),
+      bedtimeCard(rec),
       effectsCard(rec)));
     const extraTip = r => r.tags.length ? [{ label: "After: " + r.tags.map(k => rec.tag_labels[k] || k).join(", ") }] : [];
     C.line(hrvChart, {
@@ -436,6 +438,188 @@
     }));
     return card;
   }
+  // ---------- Bedtime consistency ----------
+  function hm(minutes) {
+    const m = Math.abs(Math.round(minutes));
+    return m >= 60 ? `${Math.floor(m / 60)}h` + (m % 60 ? String(m % 60).padStart(2, "0") : "") : `${m} min`;
+  }
+  function bedtimeCard(rec) {
+    const b = rec.bedtime;
+    if (!b || !b.nights || b.nights.length < 3) {
+      return h("section", { class: "card" }, h("h2", null, "Bedtime consistency"),
+        h("p", { class: "note" }, "Waiting for sleep times from Garmin. They fill in over the next few refreshes, going back four months."));
+    }
+    const chart = h("div", { class: "chart" });
+    const late = (rec.effects || []).find(e => e.key === "late_bed");
+    let effect = "Not enough late nights yet to say what they do to your HRV.";
+    if (late && late.hrv && late.hrv.delta != null && late.hrv.confidence !== "too_few") {
+      effect = `Mornings after a late bedtime: HRV ${signed(late.hrv.delta)} ms (${signed(late.hrv.delta_pct, 0)}%) and sleep score ${signed(late.sleep_score.delta)} against your baseline, over ${late.hrv.n} nights. ${confidenceText(late.hrv.confidence)}.`
+        + (late.overlaps && late.overlaps.length ? ` These nights mostly come with ${late.overlaps.map(o => (rec.tag_labels[o.key] || o.key).toLowerCase()).join(" and ")}, so that's part of it.` : "");
+    }
+    const card = h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Bedtime consistency"), h("span", { class: "small muted" }, `Last ${b.n} nights`)),
+      h("div", { class: "tiles" },
+        tile("Usual bedtime", b.usual_bed || "–", "median"),
+        tile("Usual wake time", b.usual_wake || "–", "median"),
+        tile("Bedtime spread", b.bed_sd != null ? "±" + hm(b.bed_sd) : "–", "under 30 min is steady"),
+        tile("Weekend shift", b.weekend_shift != null ? (b.weekend_shift >= 0 ? "+" : "−") + hm(b.weekend_shift) : "–", "Fri/Sat nights vs the rest"),
+        tile("Late nights", `${b.late_nights} / ${b.n}`, `${hm(b.late_by)}+ after your usual time`)),
+      h("div", { class: "legend" }, h("span", null, h("i", { class: "box", style: "background:var(--accent);opacity:1" }), "Asleep → awake"),
+        h("span", null, h("i", { class: "box", style: "background:var(--seq2);opacity:1" }), `Late bedtime (${hm(b.late_by)}+ after usual)`),
+        b.usual_bed ? h("span", null, h("i", { class: "line-key" }), `Usual bedtime ${b.usual_bed}`) : null),
+      chart,
+      h("p", { class: "note" }, effect));
+    const usual = b.nights.map(n => n.bed_m).sort((x, y) => x - y)[Math.floor(b.nights.length / 2)];
+    requestAnimationFrame(() => C.ranges(chart, {
+      data: b.nights, label: "Sleep times", height: 220,
+      refLine: b.usual_bed ? { y: usual, label: "" } : null,
+      tip: n => [{ head: true, label: day(n.date) }, { value: `${n.bed} → ${n.wake}`, label: "asleep → awake" },
+        { value: hm(n.hours * 60), label: "in bed asleep" }].concat(n.late ? [{ label: "Late bedtime" }] : []),
+    }));
+    return card;
+  }
+
+  // ---------- Month ----------
+  const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const WEEKDAYS_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const isoDay = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  function renderMonth(panel) {
+    const cal = DATA.calendar;
+    if (!cal || !cal.days || !cal.days.length) {
+      panel.append(h("section", { class: "card" }, h("h2", null, "No mornings yet"), h("p", { class: "note" }, "The month view fills in once Garmin data arrives.")));
+      return;
+    }
+    const days = cal.days;
+    const byDate = Object.fromEntries(days.map(x => [x.date, x]));
+    const months = [...new Set(days.map(x => x.date.slice(0, 7)))];
+    if (monthIdx == null || monthIdx >= months.length) monthIdx = months.length - 1;
+    const ym = months[monthIdx];
+    const inMonth = days.filter(x => x.date.startsWith(ym));
+    if (!monthPick || !monthPick.startsWith(ym) || !byDate[monthPick]) monthPick = inMonth[inMonth.length - 1].date;
+    const first = C.parseDay(ym + "-01");
+    const lead = (first.getDay() + 6) % 7;
+    const count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    const detail = h("div", { class: "day-detail", "aria-live": "polite" });
+    const cells = [];
+    const grid = h("div", { class: "month-grid", role: "group", "aria-label": first.toLocaleDateString(undefined, { month: "long", year: "numeric" }) },
+      WEEKDAYS.map(w => h("div", { class: "month-wd", "aria-hidden": "true" }, w)),
+      Array.from({ length: lead }, () => h("div", { class: "mcell blank" })),
+      Array.from({ length: count }, (_, i) => {
+        const iso = `${ym}-${String(i + 1).padStart(2, "0")}`, x = byDate[iso];
+        if (!x) return h("div", { class: "mcell blank" }, h("span", { class: "mnum" }, String(i + 1)));
+        const btn = h("button", {
+          type: "button", class: "mcell " + x.status + (iso === DATA.today_date ? " today" : ""),
+          "aria-pressed": String(iso === monthPick),
+          "aria-label": `${day(iso)}: ${STATUS_WORD[x.status]}, training load ${x.load}. Show details`,
+          onclick: () => pick(iso),
+        }, h("span", { class: "mnum" }, String(i + 1)),
+          h("span", { class: "mmark", "aria-hidden": "true" }, STATUS_MARK[x.status]),
+          h("span", { class: "mload num", "aria-hidden": "true" }, x.load ? String(x.load) : ""));
+        cells.push([iso, btn]);
+        return btn;
+      }));
+    function pick(iso) {
+      monthPick = iso;
+      cells.forEach(([k, b]) => b.setAttribute("aria-pressed", String(k === iso)));
+      detail.replaceChildren(...dayDetail(byDate[iso]));
+    }
+    pick(monthPick);
+    const nav = (step, label) => h("button", { type: "button", class: "nav-btn", "aria-label": label, disabled: !months[monthIdx + step],
+      onclick: () => { monthIdx += step; monthPick = null; renderTab(); } }, step < 0 ? "‹" : "›");
+    panel.append(h("div", { class: "stack" },
+      h("section", { class: "card" },
+        h("div", { class: "card-head" }, h("h2", null, first.toLocaleDateString(undefined, { month: "long", year: "numeric" })),
+          h("div", { class: "nav-pair" }, nav(-1, "Previous month"), nav(1, "Next month"))),
+        grid,
+        h("p", { class: "small muted" }, "✓ green, ! amber, ✕ red morning. The number is that day's training load. Tap a day for the details."),
+        detail),
+      weekdayCard(days),
+      weekCard(cal.weeks, true)));
+  }
+  function weekdayCard(days) {
+    const rows = WEEKDAYS.map((w, i) => {
+      const xs = days.filter(x => (C.parseDay(x.date).getDay() + 6) % 7 === i && x.status !== "unknown");
+      const n = k => xs.filter(x => x.status === k).length;
+      const before = xs.map(x => (x.before || {}).load || 0);
+      return { w, full: WEEKDAYS_FULL[i], total: xs.length, green: n("green"), amber: n("amber"), red: n("red"),
+        before: before.length ? Math.round(before.reduce((a, b) => a + b, 0) / before.length) : null };
+    });
+    const worst = rows.filter(r => r.total).sort((a, b) => b.red / b.total - a.red / a.total || b.amber - a.amber)[0];
+    const weeks = Math.round(days.length / 7);
+    return h("section", { class: "card" },
+      h("h2", null, "Mornings by weekday"),
+      worst && worst.red ? h("p", { class: "note" }, h("strong", null, `Most red mornings: ${worst.full}s`), ` (${worst.red} of ${worst.total}), after an average load of ${worst.before} the day before.`)
+        : h("p", { class: "note" }, "No red mornings in this period."),
+      h("div", { class: "tablewrap" }, h("table", { class: "compact" },
+        h("thead", null, h("tr", null, h("th", null, h("span", { class: "sr" }, "Weekday")),
+          h("th", { class: "num", title: "Green mornings" }, "✓", h("span", { class: "sr" }, " green")),
+          h("th", { class: "num", title: "Amber mornings" }, "!", h("span", { class: "sr" }, " amber")),
+          h("th", { class: "num", title: "Red mornings" }, "✕", h("span", { class: "sr" }, " red")),
+          h("th", { class: "num" }, "Load before"))),
+        h("tbody", null, rows.map(r => h("tr", { class: worst && r === worst && r.red ? "hl" : null },
+          h("td", null, r.w), h("td", { class: "num" }, r.green), h("td", { class: "num" }, r.amber), h("td", { class: "num" }, r.red),
+          h("td", { class: "num" }, r.before == null ? "–" : String(r.before))))))),
+      h("p", { class: "small muted" }, `✓ green, ! amber, ✕ red mornings over the last ${weeks} weeks. Load before is the average training load the day before.`));
+  }
+
+  // ---------- Week in review ----------
+  function latestFullWeek(weeks) { return weeks.length > 1 && weeks[0].partial ? 1 : 0; }
+  function reviewOnToday(d) {
+    const dow = C.parseDay(d.today_date).getDay();   // 0 Sunday, 1 Monday
+    if (!d.calendar || !d.calendar.weeks || (dow !== 0 && dow !== 1)) return null;
+    return weekCard(d.calendar.weeks, false);
+  }
+  function bedMin(t) { if (!t) return null; const [hh, mm] = t.split(":").map(Number); return ((hh * 60 + mm) - 18 * 60 + 1440) % 1440; }
+  function weekCard(weeks, withNav) {
+    if (!weeks || !weeks.length) return null;
+    if (withNav && (weekIdx == null || !weeks[weekIdx])) weekIdx = latestFullWeek(weeks);
+    const i = withNav ? weekIdx : latestFullWeek(weeks);
+    const w = weeks[i], p = weeks[i + 1];
+    const range = `${C.fmtDay(w.start)} – ${C.fmtDay(w.end)}` + (w.partial ? ` (so far, ${w.days} day${w.days === 1 ? "" : "s"})` : "");
+    const diff = (a, b, dp = 0, unit = "") => (a == null || b == null) ? "" : (a === b ? "same" : signed(a - b, dp) + unit);
+    const cols = c => `${c.green} ✓ · ${c.amber} ! · ${c.red} ✕`;
+    const bed = x => x.bedtime && x.bedtime.usual_bed ? x.bedtime.usual_bed + (x.bedtime.bed_sd != null ? ` ±${hm(x.bedtime.bed_sd)}` : "") : "–";
+    const bedDiff = (a, b) => {
+      const x = bedMin(a.bedtime && a.bedtime.usual_bed), y = b && bedMin(b.bedtime && b.bedtime.usual_bed);
+      return x == null || y == null ? "" : x === y ? "same" : (x > y ? "+" : "−") + hm(x - y) + (x > y ? " later" : " earlier");
+    };
+    const row = (label, a, b, change) => h("tr", null, h("td", null, label),
+      h("td", { class: "num" }, String(a), change ? h("div", { class: "small muted" }, change) : null),
+      h("td", { class: "num muted" }, String(b)));
+    const table = h("table", { class: "week-table" },
+      h("thead", null, h("tr", null, h("th", null, h("span", { class: "sr" }, "Measure")), h("th", { class: "num" }, w.partial ? "This week" : "Week"), h("th", { class: "num" }, "Week before"))),
+      h("tbody", null,
+        row("Training load", fmt(w.load), p ? fmt(p.load) : "–", p && diff(w.load, p.load)),
+        row("Activities", `${w.sessions} (${w.gym_sessions} gym)`, p ? `${p.sessions} (${p.gym_sessions} gym)` : "–", p && diff(w.sessions, p.sessions)),
+        row("Rest days", w.rest_days, p ? p.rest_days : "–", p && diff(w.rest_days, p.rest_days)),
+        row("Mornings", cols(w.colours), p ? cols(p.colours) : "–", ""),
+        row("Average HRV", w.hrv != null ? `${fmt(w.hrv)} ms` : "–", p && p.hrv != null ? `${fmt(p.hrv)} ms` : "–", p && diff(w.hrv, p.hrv, 0, " ms")),
+        row("Average sleep", w.sleep_score != null ? `${fmt(w.sleep_score)} · ${fmt(w.sleep_hours, 1)} h` : "–", p && p.sleep_score != null ? `${fmt(p.sleep_score)} · ${fmt(p.sleep_hours, 1)} h` : "–", p && diff(w.sleep_score, p.sleep_score)),
+        row("Resting HR", w.rhr != null ? `${fmt(w.rhr)} bpm` : "–", p && p.rhr != null ? `${fmt(p.rhr)} bpm` : "–", p && diff(w.rhr, p.rhr, 0, " bpm")),
+        row("Bedtime", bed(w), p ? bed(p) : "–", p ? bedDiff(w, p) : ""),
+        row("Alcohol evenings", w.alcohol, p ? p.alcohol : "–", p && diff(w.alcohol, p.alcohol))));
+    const parts = [...new Set([...Object.keys(w.sets || {}), ...Object.keys((p && p.sets) || {})])];
+    const sets = parts.map(k => {
+      const a = (w.sets || {})[k] || 0, b = ((p && p.sets) || {})[k] || 0;
+      return `${cap(k)} ${a}` + (p && a !== b ? ` (${signed(a - b, 0)})` : "");
+    });
+    const nav = (step, label) => h("button", { type: "button", class: "nav-btn", "aria-label": label, disabled: !weeks[weekIdx + step],
+      onclick: () => { weekIdx += step; renderTab(); } }, step > 0 ? "‹" : "›");
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Week in review"), h("span", { class: "small muted" }, range)),
+        withNav ? h("div", { class: "nav-pair" }, nav(1, "Earlier week"), nav(-1, "Later week")) : null),
+      h("div", { class: "tablewrap" }, table),
+      sets.length ? h("p", { class: "note" }, h("strong", null, "Hard gym sets: "), sets.join(", ")) : null,
+      h("h3", null, "Warnings raised"),
+      w.flags && w.flags.length ? h("div", { class: "rows" }, w.flags.map(f => h("div", { class: "row" },
+        h("div", null, h("span", { class: "row-title" }, cap(FLAG_WORDS[f.key] || f.key)),
+          h("span", { class: "muted small" }, ` · ${f.days} day${f.days === 1 ? "" : "s"}, first ${C.fmtDay(f.date)}`),
+          h("div", { class: "small muted" }, f.text)),
+        chip(f.level, f.level))))
+        : h("p", { class: "note" }, "None this week."),
+      withNav ? null : h("p", { class: "small muted" }, "Earlier weeks are on the ", go("month"), " tab."));
+  }
+
   function confidenceText(c) {
     return { clear: "Clear effect", possible: "Possible", none: "No effect seen", too_few: "Too few nights" }[c] || c;
   }

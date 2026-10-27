@@ -292,11 +292,12 @@ def build(activities: list[dict], daily: list[dict], cfg: dict, today: date,
 
     series = [{"date": day.isoformat(), "load": rnd(v, 0)}
               for day, v in sorted(loads.items()) if day >= today - timedelta(days=84)]
-    acwr_series = []
+    acwr_series, flags_by_day = [], {}
     for day in sorted(loads):
         if day >= today - timedelta(days=84):
-            s = scan(loads, hrv_rows, day, cfg)
+            s = scan(loads, hrv_rows, day, cfg, sig)
             acwr_series.append({"date": day.isoformat(), "acwr": s["acwr"]})
+            flags_by_day[day.isoformat()] = s["flags"]
     break_days = int(cfg.get("break_days", 14))
     vol = {r["part"]: r for r in gymload.volume(sig.sets, today)}
     # Body parts rested long enough that the next session should start lighter.
@@ -311,6 +312,6 @@ def build(activities: list[dict], daily: list[dict], cfg: dict, today: date,
             "body_parts": table, "returns": gymload.returns(sig.sets, today, break_days, 14),
             "coming_back": coming_back,
             "soreness": soreness_grid(sig.soreness, today), "soreness_logged": bool(sig.soreness),
-            "daily_load": series, "acwr_series": acwr_series,
+            "daily_load": series, "acwr_series": acwr_series, "flags_by_day": flags_by_day,
             "thresholds": {k: cfg[k] for k in ("acwr_caution", "acwr_high", "rest_day_load", "high_day_load",
                                                "volume_ratio_caution", "break_days")}}

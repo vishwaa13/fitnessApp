@@ -115,6 +115,7 @@ DEFAULTS: dict[str, Any] = {
         "keep_tags_note_title": "recovery tags",
         "late_training_hour": 20,
         "travel_km": 150,
+        "late_bed_minutes": 60,     # bedtime this much after your usual counts as late
         "window_days": 180,
     },
     "injury": {

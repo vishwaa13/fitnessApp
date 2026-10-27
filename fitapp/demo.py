@@ -129,15 +129,27 @@ def build(cfg: dict, now: datetime | None = None) -> dict:
             hrv -= 5
         if prev == today - timedelta(days=1):
             hrv -= 8; sleep -= 8
+        # Bedtime: later on Friday/Saturday nights, after drinks and late sessions.
+        bed_min = 23 * 60 + 15 + rng.gauss(0, 18)
+        bed_min += 50 if prev.weekday() in (4, 5) else 0
+        bed_min += 70 if prev in alcohol_days else 0
+        bed_min += 35 if prev in late_days else 0
+        bed_min += 25 if prev in travel_days else 0
+        if bed_min > 24 * 60 + 30:
+            hrv -= 3
         hrv = max(30, hrv)
         sleep = int(max(30, min(98, sleep)))
         readiness = int(max(5, min(100, 55 + (hrv - 58) * 2.2 + (sleep - 72) * 0.8 - fatigue * 2)))
         level = ("PRIME" if readiness >= 95 else "HIGH" if readiness >= 75 else "MODERATE" if readiness >= 50
                  else "LOW" if readiness >= 25 else "POOR")
+        hours = round(7.4 + (sleep - 78) / 25 + rng.gauss(0, 0.3), 2)
+        bed = datetime.combine(prev, datetime.min.time()) + timedelta(minutes=round(bed_min))
         daily.append({
             "date": day.isoformat(), "hrv": round(hrv), "hrv_weekly": None,
             "hrv_low": 54, "hrv_high": 71, "hrv_status": "BALANCED" if hrv > 54 else "UNBALANCED",
-            "sleep_score": sleep, "sleep_hours": round(7.4 + (sleep - 78) / 25 + rng.gauss(0, 0.3), 2),
+            "sleep_score": sleep, "sleep_hours": hours,
+            "bed": bed.strftime("%Y-%m-%dT%H:%M"),
+            "wake": (bed + timedelta(hours=hours + 0.3)).strftime("%Y-%m-%dT%H:%M"),
             "rhr": round(rhr), "readiness": readiness, "readiness_level": level,
             "readiness_feedback": "HRV below baseline, poor sleep" if readiness < 40 else "",
             "bb_high": None, "bb_wake": None, "stress": None, "lifestyle_tags": [],

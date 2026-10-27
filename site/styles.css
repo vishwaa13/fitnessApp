@@ -138,6 +138,33 @@ button, input, select { font: inherit; color: inherit; }
               background: none; border: 0; padding: 4px 0; border-radius: 9px; cursor: pointer; min-width: 0; }
 .strip-cell:hover { background: var(--surface-2); }
 .strip-cell[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+/* Month grid: one button per morning, status colour + mark, day's load. */
+.month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.month-wd { text-align: center; font-size: 0.72rem; color: var(--muted); font-weight: 600; padding-bottom: 2px; }
+.mcell { display: grid; grid-template-rows: auto 1fr auto; justify-items: center; min-height: 58px; padding: 4px 2px;
+         border: 0; border-radius: 8px; background: var(--surface-2); color: var(--ink); font: inherit; cursor: pointer; min-width: 0; }
+.mcell.blank { background: none; cursor: default; color: var(--muted); }
+.mcell.green { background: var(--good-bg); }
+.mcell.amber { background: var(--warn-bg); }
+.mcell.red { background: var(--bad-bg); }
+.mcell .mnum { font-size: 0.75rem; justify-self: start; padding-left: 4px; color: var(--ink-2); }
+.mcell .mmark { font-weight: 700; font-size: 0.95rem; align-self: center; }
+.mcell.green .mmark { color: var(--good-ink); }
+.mcell.amber .mmark { color: var(--warn-ink); }
+.mcell.red .mmark { color: var(--bad-ink); }
+.mcell .mload { font-size: 0.72rem; color: var(--ink-2); }
+.mcell.today { box-shadow: inset 0 0 0 2px var(--ink); }
+.mcell[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mcell:not(.blank):hover { filter: brightness(0.97); }
+.nav-pair { display: inline-flex; gap: 6px; }
+.nav-btn { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+           font-size: 1.2rem; line-height: 1; cursor: pointer; }
+.nav-btn:disabled { opacity: 0.35; cursor: default; }
+tr.hl td { background: var(--bad-bg); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.week-table td { padding: 7px 6px; }
+.week-table td:first-child { color: var(--ink-2); }
+.legend .line-key { display: inline-block; width: 14px; height: 0; border-top: 1px solid var(--muted); vertical-align: middle; }
 .day-detail { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
 .day-detail h4 { margin: 4px 0 0; font-family: var(--font-display); font-size: 0.95rem; font-weight: 600; color: var(--ink-2); }
 .strip-dot { width: 100%; max-width: 34px; aspect-ratio: 1; border-radius: 7px; background: var(--surface-2); display: grid; place-items: center; font-weight: 700; font-size: 0.75rem; color: var(--bg); }
@@ -201,7 +228,9 @@ tbody tr.clickable:hover td { background: var(--surface-2); }
 .chart .cross { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
 .chart .col { fill: var(--accent); }
 .chart .col.high { fill: var(--div-bad); }
-.chart .col.hover, .chart .dv.hover { opacity: 0.75; }
+.chart .col.hover, .chart .dv.hover, .chart .rng.hover { opacity: 0.75; }
+.chart .rng { fill: var(--accent); }
+.chart .rng.late { fill: var(--seq2); }
 .chart .dv-bad { fill: var(--div-bad); }
 .chart .dv-good { fill: var(--div-good); }
 .chart .dv-muted { opacity: 0.45; }
