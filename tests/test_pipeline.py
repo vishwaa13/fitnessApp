@@ -33,6 +33,7 @@ class FakeGarmin:
         self.cache, self.api, self.calls = cache, None, 0
         self.uploaded, self.scheduled, self.descriptions = [], [], {}
         self.status = {"api": "not set up", "login": "not tried"}
+        self.lifestyle_sample = None
         FakeGarmin.instances.append(self)
 
     def connect(self):
@@ -226,6 +227,28 @@ def test_garmin_rereads_stored_lifestyle_logs_once(monkeypatch, caplog):
     n = len(Api.lifestyle_calls)
     src.daily(today - timedelta(days=30), today)
     assert old not in Api.lifestyle_calls[n:]          # only once
+    assert src.lifestyle_sample is None                # read fine: nothing to show
+
+
+def test_garmin_keeps_an_unreadable_lifestyle_log_for_the_dashboard_only(monkeypatch, caplog):
+    from fitapp.sources import garmin as g
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    today = date(2026, 10, 24)
+
+    class Api:
+        def get_lifestyle_logging_data(self, ds):
+            return {"calendarDate": ds, "completionStats": {"completedTracking": 1, "totalTracking": 3},
+                    "dailyLogsReport": [{"name": "Alcohol", "details": [{"subTypeName": "SECRET_BEER"}]}]}
+
+        def __getattr__(self, name):
+            return lambda *a: None
+
+    src = g.GarminSource({})
+    src.api = Api()
+    with caplog.at_level("INFO"):
+        src.daily(today - timedelta(days=3), today)
+    assert src.lifestyle_sample["calendarDate"] == today.isoformat()      # the latest day
+    assert "SECRET_BEER" not in caplog.text                               # field names only in the log
 
 
 

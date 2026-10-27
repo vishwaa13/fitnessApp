@@ -555,6 +555,7 @@
           h("span", { class: "mdrink inline", "aria-hidden": "true" }), " alcohol that evening. Tap a day for the details."),
         detail),
       alcoholCard(ym),
+      lifestyleSampleCard(),
       weekdayCard(days),
       weekCard(cal.weeks, true)));
   }
@@ -583,6 +584,31 @@
       types.length ? h("p", { class: "note" }, h("strong", null, "By type: "), types.map(([k, v]) => `${fmt(v)} ${plural(k, v)}`).join(", ")) : null,
       effect ? h("p", { class: "note" }, effect) : null,
       h("p", { class: "small muted" }, "From Garmin's lifestyle log, plus lines like \u201c27/10 3 beers\u201d in your recovery tags note. Garmin's amount wins when both have one."));
+  }
+  // Garmin's raw drinks log for a day the reader couldn't make sense of; gone once the reader handles it.
+  function lifestyleSampleCard() {
+    const raw = DATA.garmin_lifestyle_sample;
+    if (!raw) return null;
+    const text = JSON.stringify(raw, null, 1);
+    const pre = h("pre", { class: "raw", tabindex: "0" }, text);
+    const status = h("span", { class: "small muted", role: "status" });
+    const copy = () => {
+      const done = () => { status.textContent = "Copied."; };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => { selectAll(pre); status.textContent = "Selected: copy it with your usual shortcut."; });
+      else { selectAll(pre); status.textContent = "Selected: copy it with your usual shortcut."; }
+    };
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Garmin drinks log: not read yet")),
+      h("p", { class: "note" }, `Garmin says you logged something in its lifestyle log${raw.calendarDate ? " on " + day(raw.calendarDate) : ""}, but in a format the dashboard can't read yet, so drinks logged in Garmin aren't counted above. Below is exactly what Garmin sent for that day. Copy it into your chat with Claude so the reader can be fixed. It only appears here, behind your passphrase, never in the public run logs.`),
+      h("div", { class: "row-gap" }, h("button", { type: "button", class: "btn", onclick: copy }, "Copy"), status),
+      pre);
+  }
+  function selectAll(el) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
   function weekdayCard(days) {
     const rows = WEEKDAYS.map((w, i) => {

@@ -330,6 +330,8 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
                    upcoming_events=upcoming, soreness=soreness, drinks=note_drinks)
     data["travel"] = other_flights
+    if garmin is not None and garmin.lifestyle_sample:
+        data["garmin_lifestyle_sample"] = garmin.lifestyle_sample
     if gym_text:
         ov_out = data["overload"]
         # The repo's Actions logs are public: counts only, no health details.

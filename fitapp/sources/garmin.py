@@ -153,6 +153,12 @@ def drinks(data: Any) -> dict[str, float] | None:
     return found
 
 
+def readable(data: Any) -> bool:
+    """Whether the log carries anything the readers above understand: a "...status" field or an amount."""
+    return any(k.rsplit(".", 1)[-1].lower().endswith("status") or k.rsplit(".", 1)[-1].lower() in _AMOUNT_KEYS
+               or k.rsplit(".", 1)[-1].lower() in {"answer", "logged"} for k in payload_keys(data))
+
+
 def payload_keys(data: Any, prefix: str = "") -> set[str]:
     """Field names only (no values), to debug an unknown payload in public logs."""
     keys: set[str] = set()
@@ -243,6 +249,9 @@ class GarminSource:
         self.calls = 0
         self.status = {"api": "not set up", "login": "not tried"}
         self.served: dict[str, dict[str, int]] = {}   # metric -> {"api": n, "login": n, "none": n}
+        # Garmin's raw lifestyle answer for the latest day the reader couldn't make sense of. It only
+        # goes into the encrypted dashboard (never the public log), so you can copy it from there.
+        self.lifestyle_sample: Any = None
 
     @property
     def total_calls(self) -> int:
@@ -445,10 +454,11 @@ class GarminSource:
             store[ds].update(lifestyle_tags=lifestyle_tags(lifestyle[-1]), drinks=drinks(lifestyle[-1]),
                              lifestyle_version=LIFESTYLE_VERSION)
         logged = [x for x in lifestyle if answered(x)]
-        if logged and not any(lifestyle_tags(x) for x in logged):
+        if logged and not any(lifestyle_tags(x) or readable(x) for x in logged):
             keys = set().union(*(payload_keys(x) for x in logged))
-            log.info("Garmin lifestyle log: you logged something but none read as yes; fields: %s",
-                     ", ".join(sorted(keys))[:900])
+            log.info("Garmin lifestyle log: you logged something but it has no yes/no or amount the reader "
+                     "knows; fields: %s", ", ".join(sorted(keys))[:900])
+            self.lifestyle_sample = max(logged, key=lambda x: str(x.get("calendarDate") or ""))
         for key in [k for k in store if k < since.isoformat()]:
             store.pop(key, None)
             fetched.pop(key, None)
