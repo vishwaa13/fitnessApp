@@ -131,7 +131,8 @@ def test_official_api_reads_and_login_adds_readiness_and_drinks(monkeypatch):
     assert (row["hrv"], row["hrv_low"], row["sleep_score"], row["rhr"]) == (61, 54, 81, 47)   # official
     assert row["readiness"] == 33 and row["drinks"] == {"beer": 2}                          # login
     assert row["bed"] == "2025-10-26T23:31"
-    assert "get_hrv_data" not in src.api.reads and "get_sleep_data" not in src.api.reads
+    assert src.served["hrv"]["api"] == 1 and src.served["summary"]["api"] >= 1   # today's came from the API
+    assert src.api.reads.count("get_hrv_data") == 1      # only yesterday, which the API had nothing for
     acts = src.activities(TODAY - timedelta(days=30), TODAY)
     assert acts["7"]["load"] == 160 and src.max_hr() == 191
 
@@ -173,3 +174,17 @@ def test_token_failure_is_logged_with_status_and_message_but_not_the_key(caplog)
         a.connect()
     assert "HTTP 406: Not Acceptable for key <key>" in caplog.text and "k3y" not in caplog.text
     assert "Accept" not in a.session.headers[0]          # the documented request: Authorization only
+
+
+def test_reads_are_tallied_by_connection(monkeypatch):
+    src = source(monkeypatch=monkeypatch)
+    src.daily(TODAY, TODAY)
+    assert src.served["hrv"] == {"api": 1} and src.served["sleep"] == {"api": 1} and src.served["summary"] == {"api": 1}
+
+
+def test_empty_activity_answer_with_recent_history_falls_back(monkeypatch):
+    routes = dict(OFFICIAL_ROUTES, **{"/activitylist-service/activities/search/activities": Resp(body=[])})
+    cache = {"activities": {"5": {"id": 5, "date": (TODAY - timedelta(days=2)).isoformat()}}}
+    src = source(routes=routes, cache=cache, monkeypatch=monkeypatch)
+    src.activities(TODAY - timedelta(days=30), TODAY)
+    assert "get_activities" in src.api.reads      # asked the login instead

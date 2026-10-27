@@ -242,6 +242,7 @@ class GarminSource:
         self.official = official if official is not None else PersonalApi()
         self.calls = 0
         self.status = {"api": "not set up", "login": "not tried"}
+        self.served: dict[str, dict[str, int]] = {}   # metric -> {"api": n, "login": n, "none": n}
 
     @property
     def total_calls(self) -> int:
@@ -274,18 +275,29 @@ class GarminSource:
         if self.status["api"] != "ok" and self.api is None:
             raise RuntimeError("no Garmin connection")
 
-    def _read(self, official_fn, unofficial_fn, *args):
+    def _tally(self, metric: str, source: str) -> None:
+        counts = self.served.setdefault(metric, {})
+        counts[source] = counts.get(source, 0) + 1
+
+    def _read(self, official_fn, unofficial_fn, *args, metric: str | None = None):
         """Official API first; the unofficial login when that's off or fails for this read."""
+        metric = metric or getattr(official_fn, "__name__", "read")
         if self.status["api"] == "ok":
             try:
-                return official_fn(*args)
+                value = official_fn(*args)
+                if value is not None:
+                    self._tally(metric, "api")
+                    return value
             except (KeyRejected, RateLimited) as exc:
                 self.status["api"] = "key rejected" if isinstance(exc, KeyRejected) else "rate limited"
                 log.error("Garmin Personal API stopped: %s", self.status["api"])
             except Exception as exc:  # noqa: BLE001 - one missing metric shouldn't sink the run
                 log.debug("Garmin Personal API read failed: %s", type(exc).__name__)
         if self.api is not None and unofficial_fn is not None:
-            return self._call(unofficial_fn, *args)
+            value = self._call(unofficial_fn, *args)
+            self._tally(metric, "login" if value is not None else "none")
+            return value
+        self._tally(metric, "none")
         return None
 
     def login(self) -> None:
@@ -335,7 +347,13 @@ class GarminSource:
     def activities(self, since: date, today: date | None = None) -> dict[str, dict]:
         store: dict[str, dict] = self.cache.setdefault("activities", {})
         if self.status["api"] == "ok":
-            raw = self._read(lambda: self.official.activities(since, today or date.today()), None)
+            today = today or date.today()
+            raw = self._read(lambda: self.official.activities(since, today), None, metric="activities")
+            recent = [a for a in store.values() if (today - date.fromisoformat(a["date"])).days <= 14]
+            if raw == [] and recent:
+                # An empty answer while recent history has activities is wrong, not a rest fortnight.
+                log.warning("Garmin Personal API returned no activities; reading them through the login")
+                raw = None
             if raw is not None:
                 for a in raw:
                     act = normalize_activity(a)
@@ -436,6 +454,9 @@ class GarminSource:
             fetched.pop(key, None)
         log.info("Garmin: refreshed %d day(s), %d still to backfill", min(len(todo), max_days),
                  max(0, len(todo) - max_days))
+        if self.served:
+            log.info("Garmin reads by connection: %s", "; ".join(
+                f"{m} " + ", ".join(f"{src} {n}" for src, n in sorted(c.items())) for m, c in sorted(self.served.items())))
         return store
 
     def max_hr(self) -> float | None:
