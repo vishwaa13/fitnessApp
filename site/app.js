@@ -224,23 +224,25 @@
       h("div", null, h("span", { class: "row-title" }, a.name || a.type), h("div", { class: "small muted" }, bits.join(" · "))),
       a.load != null ? h("span", { class: "num small" }, `load ${Math.round(a.load)}${a.load_estimated ? " (est.)" : ""}`) : null);
   }
-  function dayDetail(s) {
-    const out = [h("div", { class: "card-head" }, h("h3", null, day(s.date)), chip(s.status, STATUS_WORD[s.status])),
-      h("p", { class: "note" }, s.summary || "")];
+  function dayDetail(s, withHead = true) {
+    const out = withHead ? [h("div", { class: "card-head" }, h("h3", null, day(s.date)), chip(s.status, STATUS_WORD[s.status]))] : [];
+    if (s.summary) out.push(h("p", { class: "lede" }, s.summary));
     if (s.signals && s.signals.length) {
-      out.push(h("h4", null, "Why"), h("div", { class: "rows" }, s.signals.map(sg => h("div", { class: "row" },
+      out.push(sect("Why"), h("div", { class: "rows" }, s.signals.map(sg => h("div", { class: "row" },
         h("div", null, h("span", { class: "row-title" }, sg.label), " ", h("span", { class: "num" }, sg.display),
           sg.detail ? h("div", { class: "small muted" }, sg.detail) : null),
         chip(sg.level, SIGNAL_CHIP[sg.level] || sg.level)))));
     }
     const b = s.before || {};
-    const before = [b.tags && b.tags.length ? b.tags.join(", ") : null,
-      b.activities && b.activities.length ? b.activities.join(", ") + (b.load ? ` (load ${b.load})` : "") : null,
+    const tags = b.tags || [];
+    const trained = [b.activities && b.activities.length ? b.activities.join(", ") + (b.load ? ` · load ${b.load}` : "") : null,
       b.gym && b.gym.length ? "Gym: " + b.gym.join(", ") : null].filter(Boolean);
-    out.push(h("h4", null, "The day before"),
-      h("p", { class: "note" }, before.length ? before.join(" · ") : "Rest day, nothing tagged."),
-      h("p", { class: "small muted" }, "The morning colour comes from that night's sleep and HRV, so the day before is usually the cause."));
-    out.push(h("h4", null, "What you did that day"));
+    out.push(sect("The day before"));
+    if (tags.length) out.push(h("div", { class: "pills" }, tags.map(t => h("span", { class: "pill" + (/^alcohol/i.test(t) ? " drink" : "") }, t))));
+    if (trained.length) out.push(h("p", { class: "note" }, trained.join(" · ")));
+    if (!tags.length && !trained.length) out.push(h("p", { class: "note" }, "Rest day, nothing tagged."));
+    out.push(h("p", { class: "small muted" }, "The morning colour comes from that night's sleep and HRV, so the day before is usually the cause."));
+    out.push(sect("What you did that day"));
     const did = [];
     if (s.activities && s.activities.length) did.push(h("div", { class: "rows" }, s.activities.map(activityLine)));
     if (s.gym && s.gym.length) did.push(h("div", { class: "rows" }, s.gym.map(g => h("div", { class: "row" },
@@ -497,6 +499,27 @@
     return card;
   }
 
+  // ---------- Card pieces ----------
+  // Head band: a tinted strip with a kicker naming what the card is about (styles: .kind-*).
+  function band(kicker, title, sub, right) {
+    return h("header", { class: "band" },
+      h("div", { class: "band-text" }, h("span", { class: "kicker" }, kicker), h("h2", null, title), sub ? h("span", { class: "sub" }, sub) : null),
+      right || null);
+  }
+  const sect = text => h("h3", { class: "sect" }, text);
+  // A change against the period before: arrow and size, green/red only when one direction is better
+  // (dir +1: up is better, -1: down is better, 0: neither).
+  function change(d, text, dir = 0) {
+    if (d == null || Number.isNaN(d)) return null;
+    if (!d) return h("span", { class: "delta" }, "same");
+    const better = dir ? d * dir > 0 : null;
+    return h("span", { class: "delta" + (better === true ? " better" : better === false ? " worse" : "") },
+      h("span", { "aria-hidden": "true" }, d > 0 ? "▲ " : "▼ "), h("span", { class: "sr" }, d > 0 ? "up " : "down "), text,
+      better == null ? null : h("span", { class: "sr" }, better ? " (better)" : " (worse)"));
+  }
+  const statusSwatch = (k, cls = "") => h("span", { class: `sw ${k} ${cls}`, "aria-hidden": "true" }, STATUS_MARK[k]);
+  const statusLegend = () => ["green", "amber", "red"].map(k => h("span", null, statusSwatch(k), cap(k)));
+
   // ---------- Month ----------
   const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const WEEKDAYS_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -517,7 +540,7 @@
     const first = C.parseDay(ym + "-01");
     const lead = (first.getDay() + 6) % 7;
     const count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-    const detail = h("div", { class: "day-detail", "aria-live": "polite" });
+    const dayCard = h("section", { class: "card kind", "aria-live": "polite" });
     const cells = [];
     const grid = h("div", { class: "month-grid", role: "group", "aria-label": first.toLocaleDateString(undefined, { month: "long", year: "numeric" }) },
       WEEKDAYS.map(w => h("div", { class: "month-wd", "aria-hidden": "true" }, w)),
@@ -530,7 +553,7 @@
           type: "button", class: "mcell " + x.status + (iso === DATA.today_date ? " today" : ""),
           "aria-pressed": String(iso === monthPick),
           "aria-label": `${day(iso)}: ${STATUS_WORD[x.status]}, training load ${x.load}${drank ? ", alcohol that evening" : ""}. Show details`,
-          onclick: () => pick(iso),
+          onclick: () => { pick(iso); reveal(dayCard); },
         }, drank ? h("span", { class: "mdrink", "aria-hidden": "true", title: "Alcohol that evening" }) : null,
           h("span", { class: "mnum" }, String(i + 1)),
           h("span", { class: "mmark", "aria-hidden": "true" }, STATUS_MARK[x.status]),
@@ -541,23 +564,32 @@
     function pick(iso) {
       monthPick = iso;
       cells.forEach(([k, b]) => b.setAttribute("aria-pressed", String(k === iso)));
-      detail.replaceChildren(...dayDetail(byDate[iso]));
+      const x = byDate[iso];
+      dayCard.className = "card kind kind-" + (STATUS_MARK[x.status] ? x.status : "unknown");
+      dayCard.replaceChildren(band("Selected day", day(iso), null, chip(x.status, STATUS_WORD[x.status])), ...dayDetail(x, false));
     }
     pick(monthPick);
     const nav = (step, label) => h("button", { type: "button", class: "nav-btn", "aria-label": label, disabled: !months[monthIdx + step],
       onclick: () => { monthIdx += step; monthPick = null; renderTab(); } }, step < 0 ? "‹" : "›");
-    panel.append(h("div", { class: "stack" },
-      h("section", { class: "card" },
-        h("div", { class: "card-head" }, h("h2", null, first.toLocaleDateString(undefined, { month: "long", year: "numeric" })),
-          h("div", { class: "nav-pair" }, nav(-1, "Previous month"), nav(1, "Next month"))),
-        grid,
-        h("p", { class: "small muted" }, "✓ green, ! amber, ✕ red morning. The number is that day's training load; ",
-          h("span", { class: "mdrink inline", "aria-hidden": "true" }), " alcohol that evening. Tap a day for the details."),
-        detail),
-      alcoholCard(ym),
-      lifestyleSampleCard(),
-      weekdayCard(days),
-      weekCard(cal.weeks, true)));
+    const n = k => inMonth.filter(x => x.status === k).length;
+    const calCard = h("section", { class: "card kind kind-calendar" },
+      band("Calendar", first.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+        `${n("green")} green · ${n("amber")} amber · ${n("red")} red`,
+        h("div", { class: "nav-pair" }, nav(-1, "Previous month"), nav(1, "Next month"))),
+      grid,
+      h("div", { class: "legend cal-legend" }, statusLegend(),
+        h("span", null, h("span", { class: "mdrink inline", "aria-hidden": "true" }), "Alcohol"),
+        h("span", null, "Number: training load")),
+      h("p", { class: "small muted" }, "Tap a day for the details."));
+    panel.append(h("div", { class: "month-layout" },
+      calCard, dayCard, alcoholCard(ym), lifestyleSampleCard(), weekdayCard(days), weekCard(cal.weeks, true)));
+  }
+  // On a phone the picked day's card sits below the calendar: bring it into view if it's off screen.
+  function reveal(el) {
+    const r = el.getBoundingClientRect();
+    if (r.top > window.innerHeight * 0.6) {
+      el.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }
   }
   function alcoholCard(ym) {
     const al = DATA.alcohol;
@@ -566,23 +598,27 @@
     if (i < 0) return null;
     const m = al.months[i], p = al.months[i + 1];
     const name = C.parseDay(ym + "-01").toLocaleDateString(undefined, { month: "long" });
-    const vs = (a, b, unit) => (b == null ? "" : a === b ? `same as ${unit}` : `${signed(a - b, 0)} vs ${unit}`);
+    const vs = (a, b, unit) => (b == null ? null : a === b ? `same as ${unit}` : [change(a - b, fmt(Math.abs(a - b)), -1), ` vs ${unit}`]);
     const prevName = p ? C.parseDay(p.month + "-01").toLocaleDateString(undefined, { month: "long" }) : null;
     const plural = (k, v) => (v === 1 ? k : ({ beer: "beers", cocktail: "cocktails", cider: "ciders" }[k] || k));
     const types = Object.entries(m.types || {});
     const rec = (DATA.recovery.effects || []).find(e => e.key === "alcohol");
     const effect = rec && rec.hrv && rec.hrv.delta != null && rec.hrv.confidence !== "too_few"
-      ? `The morning after drinking, your HRV runs ${signed(rec.hrv.delta)} ms and sleep score ${signed(rec.sleep_score.delta)} against your baseline (${confidenceText(rec.hrv.confidence).toLowerCase()}, ${rec.hrv.n} nights).` : null;
-    return h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", null, `Alcohol in ${name}`), m.partial ? h("span", { class: "small muted" }, "so far") : null),
-      m.evenings ? h("div", { class: "tiles" },
-        tile("Evenings", m.evenings, p ? vs(m.evenings, p.evenings, prevName) : ""),
-        tile("Drinks", fmt(m.drinks), (p ? vs(m.drinks, p.drinks, prevName) : "") + (m.unknown ? ` · ${m.unknown} evening${m.unknown === 1 ? "" : "s"} without an amount` : "")),
+      ? h("div", { class: "callout" }, h("span", { class: "callout-k" }, "The morning after drinking, against your baseline"),
+        h("div", { class: "callout-v" },
+          h("span", null, h("b", { class: "num" }, signed(rec.hrv.delta) + " ms"), " HRV"),
+          rec.sleep_score && rec.sleep_score.delta != null ? h("span", null, h("b", { class: "num" }, signed(rec.sleep_score.delta)), " sleep score") : null),
+        h("span", { class: "small muted" }, `${confidenceText(rec.hrv.confidence)}, ${rec.hrv.n} nights`)) : null;
+    return h("section", { class: "card kind kind-drinks" },
+      band("Drinks", `Alcohol in ${name}`, m.partial ? "So far this month" : null),
+      m.evenings ? h("div", { class: "tiles two" },
+        tile("Evenings", m.evenings, p ? vs(m.evenings, p.evenings, prevName) : null),
+        tile("Drinks", fmt(m.drinks), [p ? vs(m.drinks, p.drinks, prevName) : null, m.unknown ? ` · ${m.unknown} evening${m.unknown === 1 ? "" : "s"} without an amount` : null]),
         tile("Per drinking evening", m.per_evening != null ? fmt(m.per_evening, 1) : "–", "where the amount was logged"),
         tile("Biggest evening", m.biggest ? fmt(m.biggest.total) : "–", m.biggest ? day(m.biggest.date) : ""))
         : h("p", { class: "note" }, `No alcohol logged in ${name}` + (p && p.evenings ? ` (${p.evenings} evening${p.evenings === 1 ? "" : "s"} in ${prevName}).` : ".")),
-      types.length ? h("p", { class: "note" }, h("strong", null, "By type: "), types.map(([k, v]) => `${fmt(v)} ${plural(k, v)}`).join(", ")) : null,
-      effect ? h("p", { class: "note" }, effect) : null,
+      types.length ? h("div", { class: "pills", "aria-label": "Drinks by type" }, types.map(([k, v]) => h("span", { class: "pill drink" }, h("b", null, fmt(v)), plural(k, v)))) : null,
+      effect,
       h("p", { class: "small muted" }, "From Garmin's lifestyle log, plus lines like \u201c27/10 3 beers\u201d in your recovery tags note. Garmin's amount wins when both have one."));
   }
   // Garmin's raw drinks log for a day the reader couldn't make sense of; gone once the reader handles it.
@@ -597,8 +633,8 @@
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => { selectAll(pre); status.textContent = "Selected: copy it with your usual shortcut."; });
       else { selectAll(pre); status.textContent = "Selected: copy it with your usual shortcut."; }
     };
-    return h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", null, "Garmin drinks log: not read yet")),
+    return h("section", { class: "card kind kind-drinks wide" },
+      band("Drinks", "Garmin drinks log: not read yet"),
       h("p", { class: "note" }, `Garmin says you logged something in its lifestyle log${raw.calendarDate ? " on " + day(raw.calendarDate) : ""}, but in a format the dashboard can't read yet, so drinks logged in Garmin aren't counted above. Below is exactly what Garmin sent for that day. Copy it into your chat with Claude so the reader can be fixed. It only appears here, behind your passphrase, never in the public run logs.`),
       h("div", { class: "row-gap" }, h("button", { type: "button", class: "btn", onclick: copy }, "Copy"), status),
       pre);
@@ -619,21 +655,31 @@
         before: before.length ? Math.round(before.reduce((a, b) => a + b, 0) / before.length) : null };
     });
     const worst = rows.filter(r => r.total).sort((a, b) => b.red / b.total - a.red / a.total || b.amber - a.amber)[0];
+    const hl = r => !!(worst && r === worst && r.red);
     const weeks = Math.round(days.length / 7);
-    return h("section", { class: "card" },
-      h("h2", null, "Mornings by weekday"),
-      worst && worst.red ? h("p", { class: "note" }, h("strong", null, `Most red mornings: ${worst.full}s`), ` (${worst.red} of ${worst.total}), after an average load of ${worst.before} the day before.`)
-        : h("p", { class: "note" }, "No red mornings in this period."),
-      h("div", { class: "tablewrap" }, h("table", { class: "compact" },
-        h("thead", null, h("tr", null, h("th", null, h("span", { class: "sr" }, "Weekday")),
-          h("th", { class: "num", title: "Green mornings" }, "✓", h("span", { class: "sr" }, " green")),
-          h("th", { class: "num", title: "Amber mornings" }, "!", h("span", { class: "sr" }, " amber")),
-          h("th", { class: "num", title: "Red mornings" }, "✕", h("span", { class: "sr" }, " red")),
-          h("th", { class: "num" }, "Load before"))),
-        h("tbody", null, rows.map(r => h("tr", { class: worst && r === worst && r.red ? "hl" : null },
-          h("td", null, r.w), h("td", { class: "num" }, r.green), h("td", { class: "num" }, r.amber), h("td", { class: "num" }, r.red),
-          h("td", { class: "num" }, r.before == null ? "–" : String(r.before))))))),
-      h("p", { class: "small muted" }, `✓ green, ! amber, ✕ red mornings over the last ${weeks} weeks. Load before is the average training load the day before.`));
+    const most = Math.max(1, ...rows.map(r => r.total));
+    const COLOR = { green: "var(--good)", amber: "var(--warn)", red: "var(--bad)" };
+    const seg = (r, k) => r[k] ? h("i", { class: k, style: `flex-grow:${r[k]}`,
+      onmousemove: e => C.showTip(e, [{ head: true, label: `${r.full}s` }, { value: String(r[k]), label: `${k} of ${r.total} mornings`, color: COLOR[k] }]),
+      onmouseleave: C.hideTip }) : null;
+    // The bars are for the eye; the hidden table carries the same numbers for screen readers.
+    const bars = h("div", { class: "wd", "aria-hidden": "true" },
+      h("span", null), h("span", { class: "wd-h" }, "Mornings"), h("span", { class: "wd-h num" }, "Red"), h("span", { class: "wd-h num", title: "Average training load the day before" }, "Load"),
+      rows.map(r => [
+        h("span", { class: "wd-day" + (hl(r) ? " hl" : "") }, r.w),
+        h("div", { class: "wd-track" }, r.total ? h("div", { class: "wd-bar", style: `width:${(r.total / most) * 100}%` }, seg(r, "green"), seg(r, "amber"), seg(r, "red")) : null),
+        h("span", { class: "num" + (hl(r) ? " hl" : "") }, String(r.red)),
+        h("span", { class: "num" }, r.before == null ? "–" : String(r.before))]));
+    const table = h("div", { class: "sr" }, h("table", null,
+      h("thead", null, h("tr", null, ["Weekday", "Green", "Amber", "Red", "Load the day before"].map(t => h("th", null, t)))),
+      h("tbody", null, rows.map(r => h("tr", null, [r.full, r.green, r.amber, r.red, r.before == null ? "–" : r.before].map(v => h("td", null, String(v))))))));
+    return h("section", { class: "card kind kind-pattern" },
+      band("Pattern", "Mornings by weekday", `Last ${weeks} weeks`),
+      worst && worst.red ? h("p", { class: "lede" }, h("strong", null, `Most red mornings: ${worst.full}s`), ` (${worst.red} of ${worst.total}), after an average load of ${worst.before} the day before.`)
+        : h("p", { class: "lede" }, "No red mornings in this period."),
+      h("div", { class: "legend cal-legend" }, statusLegend()),
+      bars, table,
+      h("p", { class: "small muted" }, "Each bar is one weekday's mornings. Load is the average training load the day before."));
   }
 
   // ---------- Week in review ----------
@@ -650,48 +696,57 @@
     const i = withNav ? weekIdx : latestFullWeek(weeks);
     const w = weeks[i], p = weeks[i + 1];
     const range = `${C.fmtDay(w.start)} – ${C.fmtDay(w.end)}` + (w.partial ? ` (so far, ${w.days} day${w.days === 1 ? "" : "s"})` : "");
-    const diff = (a, b, dp = 0, unit = "") => (a == null || b == null) ? "" : (a === b ? "same" : signed(a - b, dp) + unit);
-    const cols = c => `${c.green} ✓ · ${c.amber} ! · ${c.red} ✕`;
+    // dir: +1 when up is better, -1 when down is better, 0 when neither (load, sessions).
+    const diff = (a, b, dp = 0, unit = "", dir = 0) => (a == null || b == null) ? null
+      : change(+(a - b).toFixed(dp), fmt(Math.abs(a - b), dp) + unit, dir);
+    const cols = c => h("span", { class: "mini" }, ["green", "amber", "red"].map(k =>
+      h("span", { class: "mini-s" }, statusSwatch(k, "sm"), String(c[k]), h("span", { class: "sr" }, ` ${k}`))));
     const bed = x => x.bedtime && x.bedtime.usual_bed ? x.bedtime.usual_bed + (x.bedtime.bed_sd != null ? ` ±${hm(x.bedtime.bed_sd)}` : "") : "–";
     const bedDiff = (a, b) => {
       const x = bedMin(a.bedtime && a.bedtime.usual_bed), y = b && bedMin(b.bedtime && b.bedtime.usual_bed);
-      return x == null || y == null ? "" : x === y ? "same" : (x > y ? "+" : "−") + hm(x - y) + (x > y ? " later" : " earlier");
+      return x == null || y == null ? null : change(x - y, hm(x - y) + (x > y ? " later" : " earlier"), -1);
     };
-    const row = (label, a, b, change) => h("tr", null, h("td", null, label),
-      h("td", { class: "num" }, String(a), change ? h("div", { class: "small muted" }, change) : null),
-      h("td", { class: "num muted" }, String(b)));
+    // b is the week before; on phones its column folds into a "was" line under the change.
+    const row = (label, a, b, delta) => {
+      const before = () => (typeof b === "function" ? b() : String(b));
+      return h("tr", null, h("td", null, label),
+        h("td", { class: "num" }, typeof a === "object" ? a : h("span", { class: "wv" }, String(a)), delta ? h("div", null, delta) : null,
+          p ? h("div", { class: "was small muted" }, "was ", before()) : null),
+        h("td", { class: "num muted" }, before()));
+    };
     const table = h("table", { class: "week-table" },
       h("thead", null, h("tr", null, h("th", null, h("span", { class: "sr" }, "Measure")), h("th", { class: "num" }, w.partial ? "This week" : "Week"), h("th", { class: "num" }, "Week before"))),
       h("tbody", null,
         row("Training load", fmt(w.load), p ? fmt(p.load) : "–", p && diff(w.load, p.load)),
         row("Activities", `${w.sessions} (${w.gym_sessions} gym)`, p ? `${p.sessions} (${p.gym_sessions} gym)` : "–", p && diff(w.sessions, p.sessions)),
         row("Rest days", w.rest_days, p ? p.rest_days : "–", p && diff(w.rest_days, p.rest_days)),
-        row("Mornings", cols(w.colours), p ? cols(p.colours) : "–", ""),
-        row("Average HRV", w.hrv != null ? `${fmt(w.hrv)} ms` : "–", p && p.hrv != null ? `${fmt(p.hrv)} ms` : "–", p && diff(w.hrv, p.hrv, 0, " ms")),
-        row("Average sleep", w.sleep_score != null ? `${fmt(w.sleep_score)} · ${fmt(w.sleep_hours, 1)} h` : "–", p && p.sleep_score != null ? `${fmt(p.sleep_score)} · ${fmt(p.sleep_hours, 1)} h` : "–", p && diff(w.sleep_score, p.sleep_score)),
-        row("Resting HR", w.rhr != null ? `${fmt(w.rhr)} bpm` : "–", p && p.rhr != null ? `${fmt(p.rhr)} bpm` : "–", p && diff(w.rhr, p.rhr, 0, " bpm")),
-        row("Bedtime", bed(w), p ? bed(p) : "–", p ? bedDiff(w, p) : ""),
+        row("Mornings", cols(w.colours), p ? () => cols(p.colours) : "–", null),
+        row("Average HRV", w.hrv != null ? `${fmt(w.hrv)} ms` : "–", p && p.hrv != null ? `${fmt(p.hrv)} ms` : "–", p && diff(w.hrv, p.hrv, 0, " ms", 1)),
+        row("Average sleep", w.sleep_score != null ? `${fmt(w.sleep_score)} · ${fmt(w.sleep_hours, 1)} h` : "–", p && p.sleep_score != null ? `${fmt(p.sleep_score)} · ${fmt(p.sleep_hours, 1)} h` : "–", p && diff(w.sleep_score, p.sleep_score, 0, "", 1)),
+        row("Resting HR", w.rhr != null ? `${fmt(w.rhr)} bpm` : "–", p && p.rhr != null ? `${fmt(p.rhr)} bpm` : "–", p && diff(w.rhr, p.rhr, 0, " bpm", -1)),
+        row("Bedtime", bed(w), p ? bed(p) : "–", p ? bedDiff(w, p) : null),
         row("Alcohol evenings", w.alcohol + (w.drinks ? ` · ${fmt(w.drinks)} drinks` : ""),
-          p ? p.alcohol + (p.drinks ? ` · ${fmt(p.drinks)} drinks` : "") : "–", p && diff(w.drinks || 0, p.drinks || 0, 0, " drinks"))));
+          p ? p.alcohol + (p.drinks ? ` · ${fmt(p.drinks)} drinks` : "") : "–", p && diff(w.drinks || 0, p.drinks || 0, 0, " drinks", -1))));
     const parts = [...new Set([...Object.keys(w.sets || {}), ...Object.keys((p && p.sets) || {})])];
     const sets = parts.map(k => {
       const a = (w.sets || {})[k] || 0, b = ((p && p.sets) || {})[k] || 0;
-      return `${cap(k)} ${a}` + (p && a !== b ? ` (${signed(a - b, 0)})` : "");
+      return h("span", { class: "pill" }, cap(k), h("b", null, String(a)), p && a !== b ? change(a - b, String(Math.abs(a - b))) : null);
     });
     const nav = (step, label) => h("button", { type: "button", class: "nav-btn", "aria-label": label, disabled: !weeks[weekIdx + step],
       onclick: () => { weekIdx += step; renderTab(); } }, step > 0 ? "‹" : "›");
-    return h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("div", null, h("h2", null, "Week in review"), h("span", { class: "small muted" }, range)),
-        withNav ? h("div", { class: "nav-pair" }, nav(1, "Earlier week"), nav(-1, "Later week")) : null),
-      h("div", { class: "tablewrap" }, table),
-      sets.length ? h("p", { class: "note" }, h("strong", null, "Hard gym sets: "), sets.join(", ")) : null,
-      h("h3", null, "Warnings raised"),
-      w.flags && w.flags.length ? h("div", { class: "rows" }, w.flags.map(f => h("div", { class: "row" },
-        h("div", null, h("span", { class: "row-title" }, cap(FLAG_WORDS[f.key] || f.key)),
-          h("span", { class: "muted small" }, ` · ${f.days} day${f.days === 1 ? "" : "s"}, first ${C.fmtDay(f.date)}`),
-          h("div", { class: "small muted" }, f.text)),
-        chip(f.level, f.level))))
-        : h("p", { class: "note" }, "None this week."),
+    return h("section", { class: "card kind kind-review wide" },
+      band("Week in review", range, null, withNav ? h("div", { class: "nav-pair" }, nav(1, "Earlier week"), nav(-1, "Later week")) : null),
+      h("div", { class: "review-body" },
+        h("div", { class: "tablewrap" }, table),
+        h("div", { class: "review-side" },
+          sets.length ? [sect("Hard gym sets"), h("div", { class: "pills" }, sets)] : null,
+          sect("Warnings raised"),
+          w.flags && w.flags.length ? h("div", { class: "rows" }, w.flags.map(f => h("div", { class: "row" },
+            h("div", null, h("span", { class: "row-title" }, cap(FLAG_WORDS[f.key] || f.key)),
+              h("span", { class: "muted small" }, ` · ${f.days} day${f.days === 1 ? "" : "s"}, first ${C.fmtDay(f.date)}`),
+              h("div", { class: "small muted" }, f.text)),
+            chip(f.level, f.level))))
+            : h("p", { class: "note" }, "None this week."))),
       withNav ? null : h("p", { class: "small muted" }, "Earlier weeks are on the ", go("month"), " tab."));
   }
 

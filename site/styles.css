@@ -122,6 +122,86 @@ button, input, select { font: inherit; color: inherit; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-width: 0; display: grid; gap: 12px; align-content: start; box-shadow: var(--shadow); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .note { font-size: 0.88rem; color: var(--ink-2); max-width: 70ch; }
+.lede { font-size: 1rem; color: var(--ink); max-width: 62ch; }
+
+/* Card identity: a tinted head band with a kicker naming what the card is about, so cards
+   read apart at a glance. Status kinds reuse the chip colours; the others mix toward ink
+   so the kicker keeps 4.5:1 on its band in both themes. */
+.kind { --kind: var(--accent); --kind-ink: var(--accent-ink); --kind-bg: color-mix(in oklab, var(--kind) 10%, var(--surface)); padding-top: 0; }
+.kind-drinks { --kind: var(--seq2); --kind-ink: color-mix(in oklab, var(--seq2) 65%, var(--ink)); }
+.kind-pattern { --kind: var(--sleep); --kind-ink: color-mix(in oklab, var(--sleep) 65%, var(--ink)); }
+.kind-review { --kind: var(--muted); --kind-ink: var(--ink-2); --kind-bg: var(--surface-2); }
+.kind-green { --kind: var(--good); --kind-ink: var(--good-ink); --kind-bg: var(--good-bg); }
+.kind-amber { --kind: var(--warn); --kind-ink: var(--warn-ink); --kind-bg: var(--warn-bg); }
+.kind-red { --kind: var(--bad); --kind-ink: var(--bad-ink); --kind-bg: var(--bad-bg); }
+.kind-unknown { --kind: var(--muted); --kind-ink: var(--ink-2); --kind-bg: var(--surface-2); }
+.band { margin: 0 -18px; padding: 12px 18px; background: var(--kind-bg); border-bottom: 1px solid var(--line);
+        border-radius: 13px 13px 0 0; display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.band-text { display: grid; gap: 2px; min-width: 0; }
+.kicker { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em;
+          text-transform: uppercase; color: var(--kind-ink); }
+.kicker::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--kind); flex: none; }
+.band .sub { font-size: 0.85rem; color: var(--ink-2); }
+/* Section labels inside a card: small caps, so they don't compete with the card title or the text. */
+.sect { font-family: var(--font-body); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--muted); margin: 4px 0 -6px; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2);
+        font-size: 0.85rem; color: var(--ink); }
+.pill b { font-variant-numeric: tabular-nums; }
+.pill.drink { background: color-mix(in oklab, var(--seq2) 14%, var(--surface)); }
+/* A change against the period before: arrow + number, coloured only when one direction is better. */
+.delta { font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.delta.better { color: var(--good-ink); }
+.delta.worse { color: var(--bad-ink); }
+.callout { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; }
+.callout-k { font-size: 0.8rem; font-weight: 600; color: var(--ink-2); }
+.callout-v { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 0.92rem; }
+.callout-v b { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; }
+.tiles.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Month tab: two columns on wide screens (calendar beside the picked day), one on phones. */
+.month-layout { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.month-layout > .card { scroll-margin-top: 72px; }   /* clear the sticky tabs when scrolled to */
+@media (min-width: 900px) {
+  .month-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row dense; }
+  .month-layout > .wide { grid-column: 1 / -1; }
+}
+/* Status swatch: the morning colour with its mark, so the colour never carries the meaning alone. */
+.sw { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; font-style: normal; font-weight: 700;
+      font-size: 0.7rem; vertical-align: middle; margin-right: 5px; }
+.sw.green { background: var(--good-bg); color: var(--good-ink); }
+.sw.amber { background: var(--warn-bg); color: var(--warn-ink); }
+.sw.red { background: var(--bad-bg); color: var(--bad-ink); }
+.sw.sm { width: 16px; height: 16px; margin-right: 3px; font-size: 0.65rem; }
+.cal-legend { gap: 6px 14px; align-items: center; }
+.cal-legend .mdrink.inline { margin-right: 6px; }
+.mini { display: inline-flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.mini-s { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+/* Mornings by weekday: one stacked bar per weekday, green/amber/red with 2px gaps. */
+.wd { display: grid; grid-template-columns: 2.8em minmax(0, 1fr) 2.6em 3.4em; gap: 8px 10px; align-items: center; font-size: 0.9rem; }
+.wd-h { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.wd-h.num, .wd .num { text-align: right; font-variant-numeric: tabular-nums; }
+.wd-track { min-width: 0; }
+.wd-bar { display: flex; gap: 2px; height: 16px; }
+.wd-bar i { display: block; flex: 1 1 0; min-width: 3px; }
+.wd-bar i:first-child { border-radius: 4px 0 0 4px; }
+.wd-bar i:last-child { border-radius: 0 4px 4px 0; }
+.wd-bar i:only-child { border-radius: 4px; }
+.wd-bar i.green { background: var(--good); }
+.wd-bar i.amber { background: var(--warn); }
+.wd-bar i.red { background: var(--bad); }
+.wd-day.hl, .wd .num.hl { font-weight: 700; }
+.week-table .wv { font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; }
+.week-table .was { display: none; }
+.review-body { display: grid; gap: 12px 32px; }
+.review-side { display: grid; gap: 12px; align-content: start; }
+@media (min-width: 900px) { .month-layout .review-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .week-table th:nth-child(3), .week-table td:nth-child(3) { display: none; }
+  .week-table .was { display: block; }
+  .mini { gap: 6px; }
+}
 
 /* Lists */
 .rows { display: grid; gap: 0; }
@@ -166,11 +246,10 @@ button, input, select { font: inherit; color: inherit; }
 .nav-btn:disabled { opacity: 0.35; cursor: default; }
 tr.hl td { background: var(--bad-bg); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.week-table td { padding: 7px 6px; }
+.week-table td { padding: 8px 6px; vertical-align: middle; }
 .week-table td:first-child { color: var(--ink-2); }
 .legend .line-key { display: inline-block; width: 14px; height: 0; border-top: 1px solid var(--muted); vertical-align: middle; }
 .day-detail { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
-.day-detail h4 { margin: 4px 0 0; font-family: var(--font-display); font-size: 0.95rem; font-weight: 600; color: var(--ink-2); }
 .strip-dot { width: 100%; max-width: 34px; aspect-ratio: 1; border-radius: 7px; background: var(--surface-2); display: grid; place-items: center; font-weight: 700; font-size: 0.75rem; color: var(--bg); }
 .strip-dot.green { background: var(--good); }
 .strip-dot.amber { background: var(--warn); color: #3a2800; }
