@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ..util import parse_local
+from .garmin_official import KeyRejected, PersonalApi, RateLimited
 
 log = logging.getLogger(__name__)
 
@@ -225,10 +226,66 @@ def _complete(row: dict) -> bool:
 
 
 class GarminSource:
-    def __init__(self, cache: dict):
+    """Garmin data from two connections.
+
+    ``official`` is Garmin's Personal API (GARMIN_API_KEY): activities, HRV,
+    sleep and the daily summary come from it when it's set up. ``api`` is the
+    unofficial garminconnect login (GARMIN_TOKENS): training readiness, the
+    lifestyle log and every write (workouts, activity descriptions) need it,
+    and it stands in for the official API when that isn't available. Either
+    one failing leaves the other working.
+    """
+
+    def __init__(self, cache: dict, official: PersonalApi | None = None):
         self.cache = cache
         self.api = None
+        self.official = official if official is not None else PersonalApi()
         self.calls = 0
+        self.status = {"api": "not set up", "login": "not tried"}
+
+    @property
+    def total_calls(self) -> int:
+        return self.calls + self.official.calls
+
+    @property
+    def can_write(self) -> bool:
+        return self.api is not None
+
+    def connect(self) -> None:
+        """Both connections; raises only when neither works."""
+        if self.official.configured:
+            try:
+                self.official.connect()
+                self.status["api"] = "ok"
+            except KeyRejected:
+                self.status["api"] = "key rejected"
+                log.error("Garmin Personal API key was rejected (expired or deleted?). Create a new one on "
+                          "Garmin Connect Web and update the GARMIN_API_KEY secret.")
+            except Exception as exc:  # noqa: BLE001
+                self.status["api"] = f"error: {type(exc).__name__}"
+                log.error("Garmin Personal API failed: %s", type(exc).__name__)
+        try:
+            self.login()
+            self.status["login"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            self.status["login"] = f"error: {type(exc).__name__}"
+            log.error("Garmin login failed: %s", type(exc).__name__)
+        if self.status["api"] != "ok" and self.api is None:
+            raise RuntimeError("no Garmin connection")
+
+    def _read(self, official_fn, unofficial_fn, *args):
+        """Official API first; the unofficial login when that's off or fails for this read."""
+        if self.status["api"] == "ok":
+            try:
+                return official_fn(*args)
+            except (KeyRejected, RateLimited) as exc:
+                self.status["api"] = "key rejected" if isinstance(exc, KeyRejected) else "rate limited"
+                log.error("Garmin Personal API stopped: %s", self.status["api"])
+            except Exception as exc:  # noqa: BLE001 - one missing metric shouldn't sink the run
+                log.debug("Garmin Personal API read failed: %s", type(exc).__name__)
+        if self.api is not None and unofficial_fn is not None:
+            return self._call(unofficial_fn, *args)
+        return None
 
     def login(self) -> None:
         from garminconnect import Garmin
@@ -274,8 +331,20 @@ class GarminSource:
             time.sleep(0.25)
 
     # -- reads ---------------------------------------------------------------
-    def activities(self, since: date) -> dict[str, dict]:
+    def activities(self, since: date, today: date | None = None) -> dict[str, dict]:
         store: dict[str, dict] = self.cache.setdefault("activities", {})
+        if self.status["api"] == "ok":
+            raw = self._read(lambda: self.official.activities(since, today or date.today()), None)
+            if raw is not None:
+                for a in raw:
+                    act = normalize_activity(a)
+                    if act and act["id"] is not None:
+                        store[str(act["id"])] = act
+                for key in [k for k, a in store.items() if date.fromisoformat(a["date"]) < since]:
+                    del store[key]
+                return store
+        if self.api is None:
+            return store
         known = set(store)
         start = 0
         for _ in range(10):
@@ -314,36 +383,48 @@ class GarminSource:
             if stale:
                 todo.append(day)
             day -= timedelta(days=1)
+        api = self.api
+        official = self.official
         lifestyle: list[Any] = []
         for day in todo[:max_days]:
             ds = day.isoformat()
-            lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
-            store[ds] = normalize_day(
+            old = store.get(ds) or {}
+            if api is not None:
+                lifestyle.append(self._call(api.get_lifestyle_logging_data, ds))
+            row = normalize_day(
                 day,
-                self._call(self.api.get_hrv_data, ds),
-                self._call(self.api.get_sleep_data, ds),
-                self._call(self.api.get_training_readiness, ds),
-                self._call(self.api.get_user_summary, ds),
-                lifestyle[-1],
+                self._read(official.hrv, api and api.get_hrv_data, ds),
+                self._read(official.sleep, api and api.get_sleep_data, ds),
+                self._call(api.get_training_readiness, ds) if api is not None else None,
+                self._read(official.summary, api and api.get_user_summary, ds),
+                lifestyle[-1] if api is not None else None,
             )
+            if api is None:
+                # Readiness and the lifestyle log only come through the login: keep what we had.
+                for key in ("readiness", "readiness_level", "readiness_feedback", "lifestyle_tags", "drinks",
+                            "lifestyle_version"):
+                    if key in old:
+                        row[key] = old[key]
+                    else:
+                        row.pop(key, None)
+            else:
+                row["lifestyle_version"] = LIFESTYLE_VERSION
+            store[ds] = row
             fetched[ds] = _utcnow().isoformat()
         fresh = {x.isoformat() for x in todo[:max_days]}
         # Days stored before bedtimes were kept: read their sleep again, 40 a run, back 120 days.
         older = [k for k in sorted(store, reverse=True) if "bed" not in store[k] and k not in fresh
                  and (today - date.fromisoformat(k)).days <= 120][:40]
         for ds in older:
-            store[ds]["bed"], store[ds]["wake"] = sleep_window(self._call(self.api.get_sleep_data, ds))
+            store[ds]["bed"], store[ds]["wake"] = sleep_window(self._read(official.sleep, api and api.get_sleep_data, ds))
         # Days stored before drink amounts were kept (or before the parser
         # changed): read their lifestyle log again, 60 a run.
         stale = [k for k in sorted(store, reverse=True) if k not in fresh
                  and ("drinks" not in store[k] or store[k].get("lifestyle_version") != LIFESTYLE_VERSION)][:60]
-        for ds in stale:
-            lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
+        for ds in stale if api is not None else []:
+            lifestyle.append(self._call(api.get_lifestyle_logging_data, ds))
             store[ds].update(lifestyle_tags=lifestyle_tags(lifestyle[-1]), drinks=drinks(lifestyle[-1]),
                              lifestyle_version=LIFESTYLE_VERSION)
-        for ds in fresh:
-            if ds in store:
-                store[ds]["lifestyle_version"] = LIFESTYLE_VERSION
         logged = [x for x in lifestyle if answered(x)]
         if logged and not any(lifestyle_tags(x) for x in logged):
             keys = set().union(*(payload_keys(x) for x in logged))
@@ -357,6 +438,10 @@ class GarminSource:
         return store
 
     def max_hr(self) -> float | None:
+        if (zones := self._read(self.official.max_hr, None)) is not None:
+            return zones
+        if self.api is None:
+            return None
         profile = self._call(self.api.get_user_profile, default={}) or {}
         user = profile.get("userData") or {}
         return user.get("maxHeartRate") or None

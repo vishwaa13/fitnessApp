@@ -32,15 +32,20 @@ class FakeGarmin:
     def __init__(self, cache):
         self.cache, self.api, self.calls = cache, None, 0
         self.uploaded, self.scheduled, self.descriptions = [], [], {}
+        self.status = {"api": "not set up", "login": "not tried"}
         FakeGarmin.instances.append(self)
 
-    def login(self):
+    def connect(self):
         self.api = object()
+        self.status["login"] = "ok"
+
+    total_calls = property(lambda self: self.calls)
+    can_write = property(lambda self: self.api is not None)
 
     def save_tokens(self):
         self.cache["garmin_tokens"] = "tok"
 
-    def activities(self, since):
+    def activities(self, since, today=None):
         store = self.cache.setdefault("activities", {})
         store["1"] = {"id": 1, "name": "Strength", "type": "strength_training", "date": "2026-09-29",
                       "start": "2026-09-29T07:00", "end": "2026-09-29T08:00", "duration_min": 60,

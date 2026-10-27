@@ -66,6 +66,17 @@ tokens and keeps them in the encrypted cache. If they ever expire, run the
 script again. You can also add `GARMIN_EMAIL` and `GARMIN_PASSWORD` as a
 fallback, but Garmin sometimes blocks password logins from cloud servers.
 
+**Garmin's official Personal API (recommended).** On Garmin Connect Web, open
+the Personal API Key page, choose Create Key, pick an expiry (up to a year), and
+save the key as the secret `GARMIN_API_KEY`. Each run swaps it for a 24-hour
+token. Activities, HRV, sleep and the daily summary then come from Garmin's
+official API; the login above is still needed for training readiness, the
+lifestyle log (drinks) and everything that writes to Garmin (workouts, activity
+descriptions), because the Personal API only reads and doesn't include those.
+If either connection fails, the other keeps working and the dashboard shows a
+banner saying what's affected. Garmin emails you a week before the key expires:
+make a new one and update the secret.
+
 ### 4. Google Calendar (for the readiness swapper)
 1. In [Google Cloud Console](https://console.cloud.google.com/) create a project, enable the **Google Calendar API**, then
    **IAM & Admin → Service accounts → Create**. Open it, **Keys → Add key → JSON**.

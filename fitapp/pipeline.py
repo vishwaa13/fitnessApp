@@ -247,8 +247,8 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     since = today - timedelta(days=int(cfg["history_days"]))
     profile_max = None
     try:
-        garmin.login()
-        garmin.activities(since - timedelta(days=60))  # extra margin for chronic load
+        garmin.connect()
+        garmin.activities(since - timedelta(days=60), today)  # extra margin for chronic load
         garmin.daily(since, today)
         profile_max = garmin.max_hr()
         sources["garmin"] = "ok"
@@ -257,6 +257,10 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
         sources["garmin"] = f"error: {type(exc).__name__}"
         if not state.get("activities"):
             garmin = None
+    if garmin is not None:
+        # Which connection did what: the official API (reads) and the login (readiness, drinks, writes).
+        sources["garmin_api"] = garmin.status["api"]
+        sources["garmin_login"] = garmin.status["login"]
     activities = list((state.get("activities") or {}).values())
     daily = list((state.get("daily") or {}).values())
 
@@ -359,7 +363,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     gstate = state.setdefault("workouts", {})
     for t in data["overload"]["templates"]:
         t["garmin_status"] = "not uploaded"
-    if garmin and garmin.api and sources.get("garmin") == "ok" and not dry_run:
+    if garmin and garmin.can_write and not dry_run:
         if ov["upload_to_garmin"]:
             next_gym_day = _next_gym_day(events, cfg, today)
             for t in data["overload"]["templates"]:
@@ -389,7 +393,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     if passphrase:
         cache_mod.save(cache_path, state, passphrase)
     log.info("Done: %s, %d Garmin calls", ", ".join(f"{k}={v}" for k, v in sources.items()),
-             garmin.calls if garmin else 0)
+             garmin.total_calls if garmin else 0)
     return data
 
 

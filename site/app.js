@@ -124,7 +124,7 @@
         !d.demo && store.get(PASS_KEY) ? h("button", { class: "linkbtn", onclick: () => { store.del(PASS_KEY); location.reload(); } }, "Lock") : null));
     const banner = d.demo
       ? h("div", { class: "banner" }, h("strong", null, "Demo data. "), "Nothing here is yours yet. Add your Garmin, Keep and Calendar secrets (see the README) and the next run publishes your real numbers.")
-      : null;
+      : garminBanner(d.sources || {});
     const tabs = h("nav", { class: "tabs", role: "tablist", "aria-label": "Sections" },
       TABS.map(([id, label]) => h("button", {
         class: "tab", role: "tab", "aria-selected": String(currentTab() === id),
@@ -132,10 +132,28 @@
       }, label)));
     const panel = h("main", { id: "panel", class: "tabpanel", role: "tabpanel" });
     const footer = h("footer", { class: "footer" },
-      Object.entries(d.sources || {}).map(([k, v]) => h("span", null, `${k[0].toUpperCase() + k.slice(1)}: ${v}`)),
+      Object.entries(d.sources || {}).map(([k, v]) => h("span", null, `${SOURCE_NAMES[k] || k[0].toUpperCase() + k.slice(1)}: ${v}`)),
       h("span", null, "Max HR used: " + fmt(d.athlete && d.athlete.max_hr)));
     app.replaceChildren(...[top, banner, verdictCard(d.today), tabs, panel, footer].filter(Boolean));
     renderTab();
+  }
+  const SOURCE_NAMES = { garmin: "Garmin", garmin_api: "Garmin API", garmin_login: "Garmin login", keep: "Keep",
+    calendar: "Calendar", event_lookup: "Event lookup" };
+  // Two Garmin connections: the official API (reads) and the login (readiness, drinks, workout uploads).
+  function garminBanner(src) {
+    const api = src.garmin_api, login = src.garmin_login;
+    const loginOk = login === "ok", apiOk = api === "ok";
+    const box = (title, text) => h("div", { class: "banner" }, h("strong", null, title + " "), text);
+    if (api === "key rejected") {
+      return box("Garmin API key rejected.", "It has probably expired or been deleted. Create a new one on Garmin Connect Web (Personal API Key) and update the GARMIN_API_KEY secret. "
+        + (loginOk ? "HRV, sleep and activities come from the Garmin login meanwhile." : "No new Garmin data until then."));
+    }
+    if (login && !loginOk && login !== "not tried") {
+      return box("Garmin login failed.", apiOk
+        ? "HRV, sleep and activities still come from Garmin's official API, but training readiness, drinks and workout uploads are paused until the GARMIN_TOKENS secret is refreshed (README, step 3)."
+        : "No new Garmin data this run. Refresh the GARMIN_TOKENS secret (README, step 3).");
+    }
+    return null;
   }
   function renderTab() {
     const panel = document.getElementById("panel");

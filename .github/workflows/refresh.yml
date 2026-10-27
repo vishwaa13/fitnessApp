@@ -55,6 +55,7 @@ jobs:
         if: env.HAS_PASSPHRASE == 'true'
         env:
           DASHBOARD_PASSPHRASE: ${{ secrets.DASHBOARD_PASSPHRASE }}
+          GARMIN_API_KEY: ${{ secrets.GARMIN_API_KEY }}
           GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
