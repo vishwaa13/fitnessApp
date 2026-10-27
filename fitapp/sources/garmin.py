@@ -172,10 +172,27 @@ def payload_keys(data: Any, prefix: str = "") -> set[str]:
     return keys
 
 
+def completion(data: Any) -> dict[str, int]:
+    """How many tracked behaviours you filled in, by day. Garmin sends the last week
+    with every day's log, so an evening logged a few days later shows up here."""
+    stats = data.get("completionStats") if isinstance(data, dict) else None
+    rows = stats if isinstance(stats, list) else [stats] if isinstance(stats, dict) else []
+    out: dict[str, int] = {}
+    for r in rows:
+        if isinstance(r, dict) and isinstance(r.get("completedTracking"), int):
+            out[str(r.get("calendarDate") or data.get("calendarDate") or "")] = r["completedTracking"]
+    return out
+
+
 def answered(data: Any) -> bool:
-    """Whether you logged anything that day (Garmin's own completedTracking count; unknown counts as yes)."""
-    stats = (data or {}).get("completionStats") if isinstance(data, dict) else None
-    return bool(data) and (not isinstance(stats, dict) or (stats.get("completedTracking") or 0) > 0)
+    """Whether you logged anything on the payload's own day (unknown counts as yes)."""
+    if not data or not isinstance(data, dict):
+        return False
+    counts = completion(data)
+    day = str(data.get("calendarDate") or "")
+    if day in counts:
+        return counts[day] > 0
+    return not counts
 
 
 def _local_time(ms: Any) -> str | None:
@@ -249,9 +266,9 @@ class GarminSource:
         self.calls = 0
         self.status = {"api": "not set up", "login": "not tried"}
         self.served: dict[str, dict[str, int]] = {}   # metric -> {"api": n, "login": n, "none": n}
-        # Garmin's raw lifestyle answer for the latest day the reader couldn't make sense of. It only
-        # goes into the encrypted dashboard (never the public log), so you can copy it from there.
-        self.lifestyle_sample: Any = None
+        # Garmin's raw lifestyle answer for the latest logged day the reader couldn't make sense of.
+        # Kept in the encrypted state and shown on the locked dashboard only, never in the public log.
+        self.lifestyle_sample: Any = cache.get("lifestyle_sample")
 
     @property
     def total_calls(self) -> int:
@@ -430,13 +447,14 @@ class GarminSource:
             if api is None:
                 # Readiness and the lifestyle log only come through the login: keep what we had.
                 for key in ("readiness", "readiness_level", "readiness_feedback", "lifestyle_tags", "drinks",
-                            "lifestyle_version"):
+                            "lifestyle_version", "lifestyle_logged"):
                     if key in old:
                         row[key] = old[key]
                     else:
                         row.pop(key, None)
             else:
                 row["lifestyle_version"] = LIFESTYLE_VERSION
+                row["lifestyle_logged"] = completion(lifestyle[-1]).get(ds, 0)
             store[ds] = row
             fetched[ds] = _utcnow().isoformat()
         fresh = {x.isoformat() for x in todo[:max_days]}
@@ -451,14 +469,27 @@ class GarminSource:
                  and ("drinks" not in store[k] or store[k].get("lifestyle_version") != LIFESTYLE_VERSION)][:60]
         for ds in stale if api is not None else []:
             lifestyle.append(self._call(api.get_lifestyle_logging_data, ds))
-            store[ds].update(lifestyle_tags=lifestyle_tags(lifestyle[-1]), drinks=drinks(lifestyle[-1]),
-                             lifestyle_version=LIFESTYLE_VERSION)
+            self._store_lifestyle(store[ds], lifestyle[-1], ds)
+        # Each answer carries the week's fill-in counts: read again any day whose count moved
+        # since we read it (logged late, or an entry removed).
+        week: dict[str, int] = {}
+        for x in lifestyle:
+            week.update(completion(x))
+        read = fresh | set(stale)
+        late = [ds for ds, n in sorted(week.items()) if ds in store and ds not in read
+                and n != store[ds].get("lifestyle_logged", 0)]
+        for ds in late if api is not None else []:
+            lifestyle.append(self._call(api.get_lifestyle_logging_data, ds))
+            self._store_lifestyle(store[ds], lifestyle[-1], ds)
         logged = [x for x in lifestyle if answered(x)]
-        if logged and not any(lifestyle_tags(x) or readable(x) for x in logged):
-            keys = set().union(*(payload_keys(x) for x in logged))
-            log.info("Garmin lifestyle log: you logged something but it has no yes/no or amount the reader "
-                     "knows; fields: %s", ", ".join(sorted(keys))[:900])
-            self.lifestyle_sample = max(logged, key=lambda x: str(x.get("calendarDate") or ""))
+        if logged and any(lifestyle_tags(x) or readable(x) for x in logged):
+            self.cache.pop("lifestyle_sample", None)
+            self.lifestyle_sample = None
+        elif logged:
+            log.info("Garmin lifestyle log: a logged day has no yes/no or amount the reader knows; "
+                     "Garmin's answer for it is on the dashboard's Month tab")
+            self.lifestyle_sample = self.cache["lifestyle_sample"] = max(
+                logged, key=lambda x: str(x.get("calendarDate") or ""))
         for key in [k for k in store if k < since.isoformat()]:
             store.pop(key, None)
             fetched.pop(key, None)
@@ -468,6 +499,11 @@ class GarminSource:
             log.info("Garmin reads by connection: %s", "; ".join(
                 f"{m} " + ", ".join(f"{src} {n}" for src, n in sorted(c.items())) for m, c in sorted(self.served.items())))
         return store
+
+    @staticmethod
+    def _store_lifestyle(row: dict, data: Any, ds: str) -> None:
+        row.update(lifestyle_tags=lifestyle_tags(data), drinks=drinks(data), lifestyle_version=LIFESTYLE_VERSION,
+                   lifestyle_logged=completion(data).get(ds, 0))
 
     def max_hr(self) -> float | None:
         if (zones := self._read(self.official.max_hr, None)) is not None:

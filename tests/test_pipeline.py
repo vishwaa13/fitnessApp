@@ -252,6 +252,88 @@ def test_garmin_keeps_an_unreadable_lifestyle_log_for_the_dashboard_only(monkeyp
 
 
 
+def _week_log(ds, counts, logged=None):
+    """Garmin's lifestyle answer as it really comes: the tracked behaviours, plus a list of the
+    week's fill-in counts. ``logged`` adds a status and amounts the way a reader would hope."""
+    alcohol = {"behaviourId": 1, "measurementType": "QUANTITY", "calendarDate": ds, "name": "Alcohol",
+               "category": "LIFESTYLE", "sleepRelated": False,
+               "details": [{"subTypeId": 1, "subTypeName": "BEER"}, {"subTypeId": 2, "subTypeName": "WINE"}]}
+    if logged:
+        alcohol.update(logStatus="YES", details=[{"subTypeId": 1, "subTypeName": "BEER", "amount": logged}])
+    return {"calendarDate": ds, "dailyLogsReport": [alcohol],
+            "completionStats": [{"calendarDate": d, "totalTracking": 1, "completedTracking": n} for d, n in counts.items()]}
+
+
+def test_lifestyle_week_counts_find_a_day_logged_late(monkeypatch):
+    from fitapp.sources import garmin as g
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    today = date(2026, 3, 10)
+    days = [(today - timedelta(days=k)).isoformat() for k in range(7)]
+    late = days[3]                                     # logged three days after the evening
+    counts = {d: int(d == late) for d in days}
+
+    class Api:
+        def __init__(self, amount):
+            self.calls, self.amount = [], amount
+
+        def get_lifestyle_logging_data(self, ds):
+            self.calls.append(ds)
+            return _week_log(ds, counts, self.amount if ds == late else None)
+
+        def __getattr__(self, name):
+            return lambda *a: None
+
+    # Read before it was logged: nothing there.
+    cache = {"daily": {d: {"date": d, "drinks": None, "lifestyle_tags": [], "lifestyle_version": g.LIFESTYLE_VERSION,
+                           "lifestyle_logged": 0} for d in days},
+             "daily_fetched": {d: "9999-12-31T00:00:00" for d in days}}      # fresh enough: only the counts can trigger a re-read
+    src = g.GarminSource(cache)
+    src.api = Api(amount=2)
+    store = src.daily(today - timedelta(days=30), today)
+    assert not g.answered(_week_log(today.isoformat(), counts))   # today: nothing filled in
+    assert late in src.api.calls and store[late]["drinks"] == {"beer": 2} and store[late]["lifestyle_logged"] == 1
+    assert src.lifestyle_sample is None
+    src.api.calls.clear()
+    src.daily(today - timedelta(days=30), today)
+    assert late not in src.api.calls                   # count unchanged: not read again
+
+
+def test_unreadable_logged_day_is_kept_for_the_dashboard_until_it_reads(monkeypatch, caplog):
+    from fitapp.sources import garmin as g
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    today = date(2026, 3, 10)
+    late = (today - timedelta(days=3)).isoformat()
+    counts = {late: 1, today.isoformat(): 0}
+
+    class Api:
+        amount = None
+
+        def get_lifestyle_logging_data(self, ds):
+            return _week_log(ds, counts, self.amount if ds == late else None)
+
+        def __getattr__(self, name):
+            return lambda *a: None
+
+    cache = {"daily": {late: {"date": late, "drinks": None, "lifestyle_version": g.LIFESTYLE_VERSION}},
+             "daily_fetched": {late: "9999-12-31T00:00:00"}}
+    src = g.GarminSource(cache)
+    src.api = Api()
+    with caplog.at_level("INFO"):
+        src.daily(today - timedelta(days=30), today)
+    assert src.lifestyle_sample["calendarDate"] == late          # the logged day, not today
+    assert "BEER" not in caplog.text and "subTypeName" not in caplog.text
+    again = g.GarminSource(cache)                                # next run, nothing new logged
+    again.api = Api()
+    again.daily(today - timedelta(days=30), today)
+    assert again.lifestyle_sample["calendarDate"] == late        # still on the dashboard
+    cache["daily"][late]["lifestyle_version"] = 0                # reader fixed: version bump re-reads it
+    fixed = g.GarminSource(cache)
+    fixed.api = Api()
+    fixed.api.amount = 3
+    fixed.daily(today - timedelta(days=30), today)
+    assert fixed.lifestyle_sample is None and "lifestyle_sample" not in cache and cache["daily"][late]["drinks"] == {"beer": 3}
+
+
 def test_strip_days_explain_their_colour():
     data = demo.build(load_config(), NOW)
     strip = data["today"]["strip"]
