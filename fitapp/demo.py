@@ -158,7 +158,8 @@ def build(cfg: dict, now: datetime | None = None) -> dict:
         window = [r["hrv"] for r in daily[max(0, i - 6):i + 1]]
         row["hrv_weekly"] = round(sum(window) / len(window))
 
-    tags_text = "\n".join(f"{d.strftime('%d/%m')} alcohol" for d in sorted(alcohol_days)
+    drink_lines = ["alcohol", "3 beers", "2 wine", "2 beers, 1 wine", "4 beers", "1 cocktail, 2 beers", "2 wine"]
+    tags_text = "\n".join(f"{d.strftime('%d/%m')} {rng.choice(drink_lines)}" for d in sorted(alcohol_days)
                           if d >= today - timedelta(days=300))
     # A fortnight of soreness lines, the way you'd jot them in the morning.
     sore = {9: "shoulder 3/5", 8: "shoulder 2/5, legs sore", 6: "shoulder 2/5", 5: "hamstrings 2/5",
@@ -167,10 +168,10 @@ def build(cfg: dict, now: datetime | None = None) -> dict:
 
     events = _calendar(today, tz)
     upcoming = _upcoming(events, cfg, today)
-    from .gymlog import parse_soreness
+    from .gymlog import parse_drinks, parse_soreness
     data = analyze(activities=acts, daily=daily, gym_text=_gym_log(today, rng), manual_tags=_tags(tags_text, today),
                    cfg=cfg, now=now, calendar_events=events, upcoming_events=upcoming,
-                   soreness=parse_soreness(tags_text, today),
+                   soreness=parse_soreness(tags_text, today), drinks=parse_drinks(tags_text, today),
                    sources={"garmin": "demo", "keep": "demo", "calendar": "demo"})
     data["demo"] = True
     for t in data["overload"]["templates"]:

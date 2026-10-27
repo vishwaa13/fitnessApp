@@ -449,6 +449,40 @@ def parse_gym_log(text: str, today: date | None = None, order: str = "DMY", unit
     return sorted([s for s in sessions if s.exercises or s.notes or s.soreness], key=lambda s: s.date)
 
 
+_DRINK_RE = re.compile(r"\b(beer|pint|lager|ipa|wine|prosecco|champagne|cider|cocktail|shot|spirit|gin|vodka|"
+                       r"whisk(?:e?y)?|rum|tequila|drink|booze|alcohol)(?:e?s)?\b")
+_DRINK_KIND = {"pint": "beer", "lager": "beer", "ipa": "beer", "prosecco": "wine", "champagne": "wine",
+               "shot": "spirits", "spirit": "spirits", "gin": "spirits", "vodka": "spirits", "rum": "spirits",
+               "tequila": "spirits", "whisky": "spirits", "whiskey": "spirits", "whisk": "spirits",
+               "drink": "drinks", "booze": "drinks", "alcohol": "drinks"}
+
+
+def drink_entry(text: str) -> tuple[str, float | None] | None:
+    """("beer", 3) for "3 beers", ("wine", None) for "wine", None if it isn't about drinking."""
+    m = _DRINK_RE.search(text.lower())
+    if not m:
+        return None
+    n = re.search(r"\d+(?:[.,]\d)?", text)
+    return _DRINK_KIND.get(m[1], m[1]), (float(n[0].replace(",", ".")) if n else None)
+
+
+def parse_drinks(text: str, today: date | None = None, order: str = "DMY") -> dict[str, dict[str, float]]:
+    """Drinks with an amount from "27/10 3 beers, wine 2" lines: {"2026-10-27": {"beer": 3, "wine": 2}}."""
+    today = today or date.today()
+    out: dict[str, dict[str, float]] = {}
+    for raw in text.splitlines():
+        hdr = parse_date_line(raw, today, order)
+        if not hdr:
+            continue
+        when, rest = hdr
+        for part in re.split(r"[,;+]|\band\b", rest):
+            entry = drink_entry(part)
+            if entry and entry[1]:
+                day = out.setdefault(when.isoformat(), {})
+                day[entry[0]] = day.get(entry[0], 0) + entry[1]
+    return out
+
+
 def parse_tags_note(text: str, today: date | None = None, order: str = "DMY") -> dict[str, list[str]]:
     """Parse "27/09 alcohol, travel" lines into {"2026-09-27": ["alcohol", "travel"]}."""
     today = today or date.today()
@@ -464,15 +498,16 @@ def parse_tags_note(text: str, today: date | None = None, order: str = "DMY") ->
         for part in pieces:
             word = re.sub(r"[^a-z ]+", " ", part).strip()
             word = re.sub(r"\s+", "_", word)
-            if word in {"drinks", "drink", "beer", "beers", "wine", "booze"}:
+            if drink_entry(part):
                 word = "alcohol"
             if word in {"flight", "flew", "travelled", "traveled", "trip"}:
                 word = "travel"
             if word:
                 tags.append(word)
-        if tags:
-            out.setdefault(when.isoformat(), [])
-            out[when.isoformat()] += [t for t in tags if t not in out[when.isoformat()]]
+        for t in tags:
+            day = out.setdefault(when.isoformat(), [])
+            if t not in day:
+                day.append(t)
     return out
 
 

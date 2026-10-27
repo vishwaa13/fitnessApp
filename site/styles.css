@@ -153,6 +153,10 @@ button, input, select { font: inherit; color: inherit; }
 .mcell.amber .mmark { color: var(--warn-ink); }
 .mcell.red .mmark { color: var(--bad-ink); }
 .mcell .mload { font-size: 0.72rem; color: var(--ink-2); }
+.mcell { position: relative; }
+.mdrink { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--seq2);
+          box-shadow: 0 0 0 2px var(--surface); }
+.mdrink.inline { position: static; display: inline-block; vertical-align: middle; box-shadow: none; }
 .mcell.today { box-shadow: inset 0 0 0 2px var(--ink); }
 .mcell[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mcell:not(.blank):hover { filter: brightness(0.97); }

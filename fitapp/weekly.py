@@ -13,7 +13,8 @@ LEVEL = {"caution": 1, "high": 2}
 
 def _week(start: date, today: date, days: dict[str, dict], daily: list[dict], activities: list[dict],
           gym_dates: set[str], sets: dict[str, dict[date, int]], alcohol: set[date],
-          flags_by_day: dict[str, list[dict]], rest_day_load: float) -> dict[str, Any]:
+          flags_by_day: dict[str, list[dict]], rest_day_load: float,
+          drinks: dict[str, dict] | None = None) -> dict[str, Any]:
     end = start + timedelta(days=6)
     last = min(end, today)
     span = [start + timedelta(days=k) for k in range((last - start).days + 1)]
@@ -51,6 +52,8 @@ def _week(start: date, today: date, days: dict[str, dict], daily: list[dict], ac
         "rhr": rnd(mean(r.get("rhr") for r in rows), 0),
         "bedtime": sleep.summary(sleep.nights(rows)),
         "alcohol": sum(1 for x in span if x in alcohol),
+        "drinks": round(sum((drinks or {}).get(x, {}).get("total") or 0 for x in iso), 1),
+        "drinks_unknown": sum(1 for x in iso if x in (drinks or {}) and drinks[x]["total"] is None),
         "sets": {part: n for part, by_day in sets.items()
                  if (n := sum(c for day, c in by_day.items() if start <= day <= last))},
         "flags": sorted(flags.values(), key=lambda f: (-LEVEL.get(f["level"], 0), f["date"])),
@@ -59,9 +62,9 @@ def _week(start: date, today: date, days: dict[str, dict], daily: list[dict], ac
 
 def build(today: date, days: list[dict], daily: list[dict], activities: list[dict], gym_dates: set[str],
           sets: dict[str, dict[date, int]], alcohol: set[date], flags_by_day: dict[str, list[dict]],
-          rest_day_load: float, weeks: int = 8) -> list[dict]:
+          rest_day_load: float, weeks: int = 8, drinks: dict[str, dict] | None = None) -> list[dict]:
     """The last ``weeks`` weeks, newest first; the first one may still be in progress."""
     by_date = {x["date"]: x for x in days}
     monday = today - timedelta(days=today.weekday())
     return [_week(monday - timedelta(days=7 * w), today, by_date, daily, activities, gym_dates, sets, alcohol,
-                  flags_by_day, rest_day_load) for w in range(weeks)]
+                  flags_by_day, rest_day_load, drinks) for w in range(weeks)]

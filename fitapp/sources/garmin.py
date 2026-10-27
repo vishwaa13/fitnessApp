@@ -111,6 +111,47 @@ def lifestyle_tags(data: Any) -> list[str]:
     return sorted(tags)
 
 
+def _amount(node: dict) -> float | None:
+    return next((float(v) for k, v in node.items() if k.lower() in _AMOUNT_KEYS
+                 and isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0), None)
+
+
+def drinks(data: Any) -> dict[str, float] | None:
+    """Drinks by type from the alcohol entry, e.g. {"beer": 2, "wine": 1}.
+
+    {} means alcohol was logged without amounts, None that none was logged."""
+    found: dict[str, float] | None = None
+
+    def walk(node: Any) -> None:
+        nonlocal found
+        if isinstance(node, list):
+            for v in node:
+                walk(v)
+            return
+        if not isinstance(node, dict):
+            return
+        name = next((node[k] for k in _NAME_KEYS if isinstance(node.get(k), str) and node[k].strip()), None)
+        details = [x for x in node.get("details") or [] if isinstance(x, dict)]
+        if name and _ALCOHOL.search(name) and details is not None and not node.get("subTypeName"):
+            status = next((str(v).upper() for k, v in node.items()
+                           if k.lower().endswith("status") or k.lower() in {"answer", "logged"}), "")
+            by_type: dict[str, float] = {}
+            for det in details:
+                if (amt := _amount(det)) is not None:
+                    kind = str(det.get("subTypeName") or det.get("name") or "drinks").strip().lower()
+                    by_type[kind] = by_type.get(kind, 0) + amt
+            if not by_type and (amt := _amount(node)) is not None:
+                by_type["drinks"] = amt
+            if by_type or status in {"YES", "TRUE", "1", "LOGGED"}:
+                found = {**(found or {}), **by_type}
+            return
+        for v in node.values():
+            walk(v)
+
+    walk(data)
+    return found
+
+
 def payload_keys(data: Any, prefix: str = "") -> set[str]:
     """Field names only (no values), to debug an unknown payload in public logs."""
     keys: set[str] = set()
@@ -169,6 +210,7 @@ def normalize_day(day: date, hrv: Any, sleep: Any, readiness: Any, summary: Any,
         "bb_wake": summary.get("bodyBatteryAtWakeTime"),
         "stress": summary.get("averageStressLevel"),
         "lifestyle_tags": lifestyle_tags(lifestyle),
+        "drinks": drinks(lifestyle),
         "bed": sleep_window(sleep)[0],
         "wake": sleep_window(sleep)[1],
     }
@@ -291,12 +333,17 @@ class GarminSource:
                  and (today - date.fromisoformat(k)).days <= 120][:40]
         for ds in older:
             store[ds]["bed"], store[ds]["wake"] = sleep_window(self._call(self.api.get_sleep_data, ds))
-        if self.cache.get("lifestyle_version") != LIFESTYLE_VERSION:
-            # Days stored before the parser changed: read their lifestyle log again, once.
-            for ds in sorted((k for k in store if k not in fresh), reverse=True)[:60]:
-                lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
-                store[ds]["lifestyle_tags"] = lifestyle_tags(lifestyle[-1])
-            self.cache["lifestyle_version"] = LIFESTYLE_VERSION
+        # Days stored before drink amounts were kept (or before the parser
+        # changed): read their lifestyle log again, 60 a run.
+        stale = [k for k in sorted(store, reverse=True) if k not in fresh
+                 and ("drinks" not in store[k] or store[k].get("lifestyle_version") != LIFESTYLE_VERSION)][:60]
+        for ds in stale:
+            lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
+            store[ds].update(lifestyle_tags=lifestyle_tags(lifestyle[-1]), drinks=drinks(lifestyle[-1]),
+                             lifestyle_version=LIFESTYLE_VERSION)
+        for ds in fresh:
+            if ds in store:
+                store[ds]["lifestyle_version"] = LIFESTYLE_VERSION
         logged = [x for x in lifestyle if answered(x)]
         if logged and not any(lifestyle_tags(x) for x in logged):
             keys = set().union(*(payload_keys(x) for x in logged))

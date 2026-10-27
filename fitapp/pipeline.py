@@ -12,9 +12,10 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import cache as cache_mod
+from . import alcohol as alcohol_mod
 from . import gymload, injury, overload, readiness, recovery, sleep, tournaments, weekly
 from .crypto import encrypt_json
-from .gymlog import Session, parse_gym_log, parse_soreness, parse_tags_note
+from .gymlog import Session, parse_drinks, parse_gym_log, parse_soreness, parse_tags_note
 from .util import d, has_keyword
 
 log = logging.getLogger(__name__)
@@ -77,7 +78,8 @@ def _sets_text(sets: list[dict]) -> str:
 
 
 def _days(today: date, daily: list[dict], activities: list[dict], sessions: list[Session],
-          soreness: list[dict], tags: dict[date, set[str]], cfg: dict, n: int = 14) -> list[dict]:
+          soreness: list[dict], tags: dict[date, set[str]], cfg: dict, n: int = 14,
+          drinks: dict[str, dict] | None = None) -> list[dict]:
     """The last ``n`` mornings, each with why it got its colour, what you did that
     day, and what happened the day before (which usually explains the morning)."""
     by_date = {r["date"]: r for r in daily}
@@ -91,8 +93,16 @@ def _days(today: date, daily: list[dict], activities: list[dict], sessions: list
     def load(day: str) -> int:
         return round(sum(a.get("load") or 0 for a in acts.get(day, [])))
 
+    drinks = drinks or {}
+
     def tag_names(day: str) -> list[str]:
-        return [recovery.TAG_LABELS.get(t, t.replace("_", " ").capitalize()) for t in sorted(tags.get(d(day), ()))]
+        names = []
+        for t in sorted(tags.get(d(day), ())):
+            name = recovery.TAG_LABELS.get(t, t.replace("_", " ").capitalize())
+            if t == "alcohol" and (drinks.get(day) or {}).get("types"):
+                name += f" ({alcohol_mod.describe(drinks[day])})"
+            names.append(name)
+        return names
 
     out = []
     for k in range(n - 1, -1, -1):
@@ -108,7 +118,8 @@ def _days(today: date, daily: list[dict], activities: list[dict], sessions: list
             "gym": [{"name": e.name, "sets": _sets_text(e.sets)} for s in gym.get(day, []) for e in s.exercises],
             "notes": [n["text"] for s in gym.get(day, []) for n in s.notes]
                      + [f"{e['body_part'].capitalize()} " + (f"sore {e['score']:g}/5" if e["score"] else "fine")
-                        for e in soreness if e["date"] == day],
+                        for e in soreness if e["date"] == day]
+                     + ([f"Alcohol: {alcohol_mod.describe(drinks[day])}"] if day in drinks else []),
             "before": {"date": prev, "load": load(prev), "tags": tag_names(prev),
                        "activities": [a.get("name") or a.get("type") for a in acts.get(prev, [])],
                        "gym": [e.name for s in gym.get(prev, []) for e in s.exercises]},
@@ -121,7 +132,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             calendar_events: list[dict] | None, sources: dict[str, str],
             profile_max_hr: float | None = None,
             upcoming_events: list[dict] | None = None,
-            soreness: list[dict] | None = None) -> dict[str, Any]:
+            soreness: list[dict] | None = None, drinks: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
     today = now.date()
     activities = sorted((dict(a) for a in activities), key=lambda a: a["start"])
     daily = sorted(daily, key=lambda r: r["date"])
@@ -153,6 +164,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
     rec = recovery.analyse(daily, tags, int(cfg["recovery"]["window_days"]), today)
 
     alcohol = {day for day, items in tags.items() if "alcohol" in items}
+    evenings = alcohol_mod.evenings(daily, tags, drinks or {}, today)
     inj = injury.build(activities, daily, cfg["injury"], today,
                        injury.Signals(pain=pain, sets=sets, soreness=soreness, alcohol=alcohol))
 
@@ -160,10 +172,10 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
     today_row = by_date.get(today.isoformat())
     previous = [r for r in daily if r["date"] < today.isoformat()]
     verdict = readiness.assess(today_row, previous, cfg["readiness"]["thresholds"])
-    days = _days(today, daily, activities, sessions, soreness, tags, cfg, n=CALENDAR_DAYS)
+    days = _days(today, daily, activities, sessions, soreness, tags, cfg, n=CALENDAR_DAYS, drinks=evenings)
     strip = days[-14:]
     weeks = weekly.build(today, days, daily, activities, {x.date.isoformat() for x in sessions if x.exercises},
-                         sets, alcohol, inj.pop("flags_by_day"), float(cfg["injury"]["rest_day_load"]))
+                         sets, alcohol, inj.pop("flags_by_day"), float(cfg["injury"]["rest_day_load"]), drinks=evenings)
 
     protected = protected_days(cfg, upcoming_events)
     swaps: list[dict] = []
@@ -196,6 +208,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
         "recovery": {**rec, "bedtime": sleep.schedule(daily, today, 28, int(cfg["recovery"].get("late_bed_minutes", 60)))},
         "injury": inj,
         "calendar": {"days": days, "weeks": weeks},
+        "alcohol": {"evenings": evenings, "months": alcohol_mod.months(evenings, today)},
         "recent_activities": recent,
         "events": upcoming_events or [],
     })
@@ -248,7 +261,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     daily = list((state.get("daily") or {}).values())
 
     # --- Keep ---------------------------------------------------------------
-    gym_text, manual_tags, soreness = None, {}, []
+    gym_text, manual_tags, soreness, note_drinks = None, {}, [], {}
     keep = KeepSource()
     if keep.configured:
         try:
@@ -256,6 +269,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
             tags_text = keep.notes_text(cfg["recovery"]["keep_tags_note_title"])
             manual_tags = parse_tags_note(tags_text, today, cfg["overload"]["date_order"]) if tags_text else {}
             soreness = parse_soreness(tags_text, today, cfg["overload"]["date_order"]) if tags_text else []
+            note_drinks = parse_drinks(tags_text, today, cfg["overload"]["date_order"]) if tags_text else {}
             sources["keep"] = "ok" if gym_text else "note not found"
         except Exception as exc:  # noqa: BLE001
             log.error("Keep failed: %s", type(exc).__name__)
@@ -310,7 +324,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
 
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
-                   upcoming_events=upcoming, soreness=soreness)
+                   upcoming_events=upcoming, soreness=soreness, drinks=note_drinks)
     data["travel"] = other_flights
     if gym_text:
         ov_out = data["overload"]

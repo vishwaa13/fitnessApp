@@ -216,7 +216,8 @@ def test_garmin_rereads_stored_lifestyle_logs_once(monkeypatch, caplog):
     src = g.GarminSource(cache)
     src.api = Api()
     store = src.daily(today - timedelta(days=30), today)
-    assert store[old]["lifestyle_tags"] == ["alcohol"] and cache["lifestyle_version"] == g.LIFESTYLE_VERSION
+    assert store[old]["lifestyle_tags"] == ["alcohol"] and store[old]["lifestyle_version"] == g.LIFESTYLE_VERSION
+    assert store[old]["drinks"] == {}          # logged yes, no amount
     n = len(Api.lifestyle_calls)
     src.daily(today - timedelta(days=30), today)
     assert old not in Api.lifestyle_calls[n:]          # only once
@@ -246,6 +247,10 @@ def test_month_calendar_and_bedtimes_in_the_published_data():
     assert bed["n"] == 28 and bed["usual_bed"] and bed["nights"][0]["bed_m"] < bed["nights"][0]["wake_m"]
     assert "late_bed" in data["recovery"]["tag_labels"]
     assert "flags_by_day" not in data["injury"]          # used for the weeks, not published
+    months = data["alcohol"]["months"]
+    assert len(months) == 6 and months[0]["month"] == NOW.strftime("%Y-%m") and any(m["drinks"] for m in months)
+    noted = {x["date"] for x in data["calendar"]["days"] if any(n.startswith("Alcohol:") for n in x["notes"])}
+    assert noted and noted <= set(data["alcohol"]["evenings"])
 
 
 def test_garmin_backfills_bedtimes_for_stored_days(monkeypatch):
@@ -261,8 +266,9 @@ def test_garmin_backfills_bedtimes_for_stored_days(monkeypatch):
         def __getattr__(self, name):
             return lambda *a: None
 
-    cache = {"daily": {old: {"date": old, "hrv": 50, "sleep_score": 70}}, "daily_fetched": {old: "2026-09-28T06:00:00"},
-             "lifestyle_version": g.LIFESTYLE_VERSION}
+    cache = {"daily": {old: {"date": old, "hrv": 50, "sleep_score": 70, "drinks": None,
+                             "lifestyle_version": g.LIFESTYLE_VERSION}},
+             "daily_fetched": {old: "2026-09-28T06:00:00"}}
     src = g.GarminSource(cache)
     src.api = Api()
     store = src.daily(today - timedelta(days=40), today)

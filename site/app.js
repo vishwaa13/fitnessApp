@@ -507,12 +507,14 @@
       Array.from({ length: count }, (_, i) => {
         const iso = `${ym}-${String(i + 1).padStart(2, "0")}`, x = byDate[iso];
         if (!x) return h("div", { class: "mcell blank" }, h("span", { class: "mnum" }, String(i + 1)));
+        const drank = DATA.alcohol && DATA.alcohol.evenings[iso];
         const btn = h("button", {
           type: "button", class: "mcell " + x.status + (iso === DATA.today_date ? " today" : ""),
           "aria-pressed": String(iso === monthPick),
-          "aria-label": `${day(iso)}: ${STATUS_WORD[x.status]}, training load ${x.load}. Show details`,
+          "aria-label": `${day(iso)}: ${STATUS_WORD[x.status]}, training load ${x.load}${drank ? ", alcohol that evening" : ""}. Show details`,
           onclick: () => pick(iso),
-        }, h("span", { class: "mnum" }, String(i + 1)),
+        }, drank ? h("span", { class: "mdrink", "aria-hidden": "true", title: "Alcohol that evening" }) : null,
+          h("span", { class: "mnum" }, String(i + 1)),
           h("span", { class: "mmark", "aria-hidden": "true" }, STATUS_MARK[x.status]),
           h("span", { class: "mload num", "aria-hidden": "true" }, x.load ? String(x.load) : ""));
         cells.push([iso, btn]);
@@ -531,10 +533,38 @@
         h("div", { class: "card-head" }, h("h2", null, first.toLocaleDateString(undefined, { month: "long", year: "numeric" })),
           h("div", { class: "nav-pair" }, nav(-1, "Previous month"), nav(1, "Next month"))),
         grid,
-        h("p", { class: "small muted" }, "✓ green, ! amber, ✕ red morning. The number is that day's training load. Tap a day for the details."),
+        h("p", { class: "small muted" }, "✓ green, ! amber, ✕ red morning. The number is that day's training load; ",
+          h("span", { class: "mdrink inline", "aria-hidden": "true" }), " alcohol that evening. Tap a day for the details."),
         detail),
+      alcoholCard(ym),
       weekdayCard(days),
       weekCard(cal.weeks, true)));
+  }
+  function alcoholCard(ym) {
+    const al = DATA.alcohol;
+    if (!al || !al.months) return null;
+    const i = al.months.findIndex(m => m.month === ym);
+    if (i < 0) return null;
+    const m = al.months[i], p = al.months[i + 1];
+    const name = C.parseDay(ym + "-01").toLocaleDateString(undefined, { month: "long" });
+    const vs = (a, b, unit) => (b == null ? "" : a === b ? `same as ${unit}` : `${signed(a - b, 0)} vs ${unit}`);
+    const prevName = p ? C.parseDay(p.month + "-01").toLocaleDateString(undefined, { month: "long" }) : null;
+    const plural = (k, v) => (v === 1 ? k : ({ beer: "beers", cocktail: "cocktails", cider: "ciders" }[k] || k));
+    const types = Object.entries(m.types || {});
+    const rec = (DATA.recovery.effects || []).find(e => e.key === "alcohol");
+    const effect = rec && rec.hrv && rec.hrv.delta != null && rec.hrv.confidence !== "too_few"
+      ? `The morning after drinking, your HRV runs ${signed(rec.hrv.delta)} ms and sleep score ${signed(rec.sleep_score.delta)} against your baseline (${confidenceText(rec.hrv.confidence).toLowerCase()}, ${rec.hrv.n} nights).` : null;
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, `Alcohol in ${name}`), m.partial ? h("span", { class: "small muted" }, "so far") : null),
+      m.evenings ? h("div", { class: "tiles" },
+        tile("Evenings", m.evenings, p ? vs(m.evenings, p.evenings, prevName) : ""),
+        tile("Drinks", fmt(m.drinks), (p ? vs(m.drinks, p.drinks, prevName) : "") + (m.unknown ? ` · ${m.unknown} evening${m.unknown === 1 ? "" : "s"} without an amount` : "")),
+        tile("Per drinking evening", m.per_evening != null ? fmt(m.per_evening, 1) : "–", "where the amount was logged"),
+        tile("Biggest evening", m.biggest ? fmt(m.biggest.total) : "–", m.biggest ? day(m.biggest.date) : ""))
+        : h("p", { class: "note" }, `No alcohol logged in ${name}` + (p && p.evenings ? ` (${p.evenings} evening${p.evenings === 1 ? "" : "s"} in ${prevName}).` : ".")),
+      types.length ? h("p", { class: "note" }, h("strong", null, "By type: "), types.map(([k, v]) => `${fmt(v)} ${plural(k, v)}`).join(", ")) : null,
+      effect ? h("p", { class: "note" }, effect) : null,
+      h("p", { class: "small muted" }, "From Garmin's lifestyle log, plus lines like \u201c27/10 3 beers\u201d in your recovery tags note. Garmin's amount wins when both have one."));
   }
   function weekdayCard(days) {
     const rows = WEEKDAYS.map((w, i) => {
@@ -597,7 +627,8 @@
         row("Average sleep", w.sleep_score != null ? `${fmt(w.sleep_score)} · ${fmt(w.sleep_hours, 1)} h` : "–", p && p.sleep_score != null ? `${fmt(p.sleep_score)} · ${fmt(p.sleep_hours, 1)} h` : "–", p && diff(w.sleep_score, p.sleep_score)),
         row("Resting HR", w.rhr != null ? `${fmt(w.rhr)} bpm` : "–", p && p.rhr != null ? `${fmt(p.rhr)} bpm` : "–", p && diff(w.rhr, p.rhr, 0, " bpm")),
         row("Bedtime", bed(w), p ? bed(p) : "–", p ? bedDiff(w, p) : ""),
-        row("Alcohol evenings", w.alcohol, p ? p.alcohol : "–", p && diff(w.alcohol, p.alcohol))));
+        row("Alcohol evenings", w.alcohol + (w.drinks ? ` · ${fmt(w.drinks)} drinks` : ""),
+          p ? p.alcohol + (p.drinks ? ` · ${fmt(p.drinks)} drinks` : "") : "–", p && diff(w.drinks || 0, p.drinks || 0, 0, " drinks"))));
     const parts = [...new Set([...Object.keys(w.sets || {}), ...Object.keys((p && p.sets) || {})])];
     const sets = parts.map(k => {
       const a = (w.sets || {})[k] || 0, b = ((p && p.sets) || {})[k] || 0;
