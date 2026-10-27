@@ -267,3 +267,11 @@ def test_garmin_backfills_bedtimes_for_stored_days(monkeypatch):
     src.api = Api()
     store = src.daily(today - timedelta(days=40), today)
     assert (store[old]["bed"], store[old]["wake"]) == ("2025-10-26T23:31", "2025-10-27T07:00")
+
+
+def test_lifestyle_diagnostic_speaks_only_when_something_was_logged():
+    from fitapp.sources.garmin import answered, payload_keys
+    assert not answered({"dailyLogsReport": [{"name": "Alcohol"}], "completionStats": {"completedTracking": 0}})
+    logged = {"dailyLogsReport": [{"name": "A"}, {"name": "B"}, {"name": "C"}, {"name": "Alcohol", "loggedValue": 2}],
+              "completionStats": {"completedTracking": 1}}
+    assert answered(logged) and "dailyLogsReport.loggedValue" in payload_keys(logged)   # past the first three

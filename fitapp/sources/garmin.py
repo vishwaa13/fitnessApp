@@ -119,9 +119,15 @@ def payload_keys(data: Any, prefix: str = "") -> set[str]:
             keys.add(prefix + k)
             keys |= payload_keys(v, prefix + k + ".")
     elif isinstance(data, list):
-        for v in data[:3]:
+        for v in data:
             keys |= payload_keys(v, prefix)
     return keys
+
+
+def answered(data: Any) -> bool:
+    """Whether you logged anything that day (Garmin's own completedTracking count; unknown counts as yes)."""
+    stats = (data or {}).get("completionStats") if isinstance(data, dict) else None
+    return bool(data) and (not isinstance(stats, dict) or (stats.get("completedTracking") or 0) > 0)
 
 
 def _local_time(ms: Any) -> str | None:
@@ -291,10 +297,11 @@ class GarminSource:
                 lifestyle.append(self._call(self.api.get_lifestyle_logging_data, ds))
                 store[ds]["lifestyle_tags"] = lifestyle_tags(lifestyle[-1])
             self.cache["lifestyle_version"] = LIFESTYLE_VERSION
-        if any(lifestyle) and not any(lifestyle_tags(x) for x in lifestyle):
-            keys = set().union(*(payload_keys(x) for x in lifestyle if x))
-            log.info("Garmin lifestyle log has entries but none read as logged; fields: %s",
-                     ", ".join(sorted(keys))[:600])
+        logged = [x for x in lifestyle if answered(x)]
+        if logged and not any(lifestyle_tags(x) for x in logged):
+            keys = set().union(*(payload_keys(x) for x in logged))
+            log.info("Garmin lifestyle log: you logged something but none read as yes; fields: %s",
+                     ", ".join(sorted(keys))[:900])
         for key in [k for k in store if k < since.isoformat()]:
             store.pop(key, None)
             fetched.pop(key, None)
