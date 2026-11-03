@@ -19,11 +19,11 @@ def test_icons_and_manifest_exist():
         assert (SITE / icon["src"]).is_file(), icon["src"]
 
 
-def test_page_only_runs_its_own_scripts_and_talks_to_github():
-    # The page holds the passphrase and, for food sync, a GitHub token.
+def test_page_only_runs_its_own_scripts_and_talks_to_the_food_sheet():
+    # The page holds the passphrase: only its own scripts run, and it talks only to the food sheet.
     html = (SITE / "index.html").read_text()
     csp = re.search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', html).group(1)
     rules = dict(r.strip().split(" ", 1) for r in csp.split(";") if r.strip())
     assert rules["script-src"] == "'self'"
-    assert rules["connect-src"] == "'self' https://api.github.com"
+    assert rules["connect-src"] == "'self' https://script.google.com https://script.googleusercontent.com"
     assert re.findall(r"<script[^>]*>", html) == ['<script src="charts.js">', '<script src="app.js">']

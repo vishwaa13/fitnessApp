@@ -2,7 +2,6 @@
 
 from fitapp import food
 from fitapp.config import load_config
-from fitapp.crypto import decrypt_json, encrypt_json
 
 
 def test_meals_get_stable_ids_and_bad_rows_are_dropped():
@@ -15,7 +14,16 @@ def test_meals_get_stable_ids_and_bad_rows_are_dropped():
     assert [(m["id"], m["kcal"], m["protein"], m["slots"]) for m in out["meals"]] == [
         ("d-skyr-whey", 245, 44, ["snacks"]), ("d-toast", 180, 0, ["misc"])]   # unknown slot dropped; none -> misc
     assert out["targets"] == {"kcal": [2850, 3100], "protein": [200, 200]}
-    assert out["store"] == {"repo": "", "branch": "food-log", "path": "food.enc.json"}
+    assert out["store"] == {"url": ""}
+
+
+def test_sheet_url_comes_from_the_secret_and_never_reaches_the_public_demo(monkeypatch):
+    url = "https://script.google.com/macros/s/AKfy-test/exec"
+    assert food.settings({}, f" {url}\n")["store"]["url"] == url
+    assert food.settings({}, "https://evil.example/exec")["store"]["url"] == ""      # only Apps Script web apps
+    from fitapp import demo
+    monkeypatch.setenv("FOOD_SHEET_URL", url)
+    assert demo.build(load_config())["food"]["store"]["url"] == ""
 
 
 def test_config_defaults_add_up_to_the_planned_day():
@@ -29,10 +37,3 @@ def test_config_defaults_add_up_to_the_planned_day():
     assert thigh_day == 3075 and breast_protein == 218
     lo, hi = out["targets"]["kcal"]
     assert lo <= thigh_day <= hi
-
-
-def test_the_site_envelope_format_round_trips():
-    # The site seals the log in the same envelope the pipeline uses, so either side can read it.
-    log = {"v": 1, "entries": {"a1": {"id": "a1", "date": "2026-11-03", "name": "Skyr + whey", "kcal": 245}}, "meals": {}}
-    env = encrypt_json(log, "pass")
-    assert set(env) == {"v", "kdf", "iter", "salt", "iv", "ct"} and decrypt_json(env, "pass") == log

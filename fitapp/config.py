@@ -114,8 +114,6 @@ DEFAULTS: dict[str, Any] = {
     "food": {
         "meals": [],
         "targets": {"kcal": None, "protein": None},
-        # Where the site saves your encrypted food log (see README: Food log).
-        "store": {"repo": "", "branch": "food-log", "path": "food.enc.json"},
     },
     "recovery": {
         "keep_tags_note_title": "recovery tags",

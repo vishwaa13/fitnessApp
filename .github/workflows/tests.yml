@@ -24,3 +24,5 @@ jobs:
       - run: pytest -q
       - name: Site scripts parse
         run: node --check site/app.js && node --check site/charts.js
+      - name: Food sheet Apps Script
+        run: node tests/js/food-sheet.test.js

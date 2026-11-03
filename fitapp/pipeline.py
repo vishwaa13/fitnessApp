@@ -132,7 +132,8 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             calendar_events: list[dict] | None, sources: dict[str, str],
             profile_max_hr: float | None = None,
             upcoming_events: list[dict] | None = None,
-            soreness: list[dict] | None = None, drinks: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
+            soreness: list[dict] | None = None, drinks: dict[str, dict[str, float]] | None = None,
+            food_url: str | None = None) -> dict[str, Any]:
     today = now.date()
     activities = sorted((dict(a) for a in activities), key=lambda a: a["start"])
     daily = sorted(daily, key=lambda r: r["date"])
@@ -211,7 +212,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
         "alcohol": {"evenings": evenings, "months": alcohol_mod.months(evenings, today)},
         "recent_activities": recent,
         "events": upcoming_events or [],
-        "food": food.settings(cfg),
+        "food": food.settings(cfg, food_url),
     })
 
 
@@ -329,7 +330,8 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
 
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
-                   upcoming_events=upcoming, soreness=soreness, drinks=note_drinks)
+                   upcoming_events=upcoming, soreness=soreness, drinks=note_drinks,
+                   food_url=os.getenv("FOOD_SHEET_URL"))
     data["travel"] = other_flights
     if garmin is not None and garmin.lifestyle_sample:
         data["garmin_lifestyle_sample"] = garmin.lifestyle_sample

@@ -762,14 +762,15 @@
   }
 
   // ---------- Food ----------
-  // The log is sealed with the dashboard passphrase and saved to a GitHub repo (DATA.food.store)
-  // through the contents API, with a token you paste once per device. This device keeps a sealed
-  // copy too, so logging works offline and syncs later. Entries and meal options merge by id
-  // (newest edit wins, removals included), so two devices logging at once don't overwrite each other.
-  const FOOD_KEY = "morningcheck.food", FOOD_SYNC_KEY = "morningcheck.foodsync";
+  // The log lives in a Google Sheet behind a small Apps Script web app (apps-script/food-log.gs);
+  // its URL reaches the page only inside the encrypted data (DATA.food.store.url), so no sign-in or
+  // token is needed on your devices. This device keeps a copy, so logging works offline and syncs
+  // later: each sync sends what changed here and gets the whole log back. Entries and meal options
+  // merge by id (newest edit wins, removals included), so two phones logging at once don't clash.
+  const FOOD_KEY = "morningcheck.food";
   const SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"], ["misc", "Misc"]];
-  const food = { log: null, sha: null, salt: null, rev: 0, pending: false, syncedAt: null, sync: null,
-    state: "local", error: "", loaded: null, busy: null, again: false, timer: null };
+  const food = { log: null, dirty: null, syncedAt: null, sheet: null, state: "local", error: "",
+    loaded: null, busy: null, again: false, timer: null };
   let foodDay = null, foodWeekOffset = 0, foodView = null;
   const kc = v => Math.round(v || 0).toLocaleString();
   const emptyLog = () => ({ v: 1, entries: {}, meals: {} });
@@ -778,60 +779,44 @@
   const localToday = () => isoDay(new Date());
   const addDays = (iso, n) => { const dt = C.parseDay(iso); dt.setDate(dt.getDate() + n); return isoDay(dt); };
   const mondayOf = iso => addDays(iso, -((C.parseDay(iso).getDay() + 6) % 7));
+  const sheetUrl = () => (!DATA.demo && DATA.food && DATA.food.store && DATA.food.store.url) || "";
+  const pendingCount = () => food.dirty ? Object.keys(food.dirty.entries).length + Object.keys(food.dirty.meals).length : 0;
 
-  // AES-GCM with a PBKDF2 key, the same envelope fitapp/crypto.py writes. Keys are cached per salt:
-  // deriving one takes a noticeable moment on a phone.
-  const keys = new Map();
-  function aesKey(pass, salt, iter) {
-    const id = `${salt}:${iter}`;
-    if (!keys.has(id)) keys.set(id, crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"])
-      .then(base => crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(salt), iterations: iter, hash: "SHA-256" },
-        base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])));
-    return keys.get(id);
-  }
-  function toB64(bytes) {
-    let out = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return btoa(out);
-  }
-  async function seal(obj, salt) {
-    salt = salt || toB64(crypto.getRandomValues(new Uint8Array(16)));
-    const iv = crypto.getRandomValues(new Uint8Array(12)), iter = 310000;
-    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(PASS, salt, iter), new TextEncoder().encode(JSON.stringify(obj)));
-    return { v: 1, kdf: "PBKDF2-SHA256", iter, salt, iv: toB64(iv), ct: toB64(new Uint8Array(ct)) };
-  }
-  async function unseal(env) {
-    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(env.iv) }, await aesKey(PASS, env.salt, env.iter), b64(env.ct));
-    return JSON.parse(new TextDecoder().decode(plain));
-  }
-  // Without a passphrase (the demo) nothing is sealed and nothing syncs.
-  const sealed = async obj => JSON.stringify(PASS ? await seal(obj) : obj);
-  const canSync = () => !DATA.demo && !!PASS;
-  async function opened(raw) {
+  // The first version kept the log on the device encrypted with the passphrase; still read those copies.
+  async function openLocal(raw) {
     const j = raw && JSON.parse(raw);
-    return j && j.ct ? (PASS ? unseal(j) : null) : j;
+    if (!j || !j.ct) return j;
+    if (!PASS) return null;
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(PASS), "PBKDF2", false, ["deriveKey"]);
+    const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(j.salt), iterations: j.iter, hash: "SHA-256" },
+      base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(j.iv) }, key, b64(j.ct))));
   }
-
   function foodLoad() {
     if (!food.loaded) food.loaded = (async () => {
-      let body = null, sync = null;
-      try { body = await opened(store.get(FOOD_KEY)); } catch (e) { body = null; }
-      try { sync = await opened(store.get(FOOD_SYNC_KEY)); } catch (e) { sync = null; }
+      let body = null;
+      try { body = await openLocal(store.get(FOOD_KEY)); } catch (e) { body = null; }
       food.log = (body && body.log) || emptyLog();
-      Object.assign(food, { sha: body && body.sha || null, salt: body && body.salt || null, pending: !!(body && body.pending),
-        syncedAt: body && body.syncedAt || null, sync: canSync() ? sync : null });
-      food.state = food.sync ? (food.pending ? "pending" : "synced") : "local";
+      food.dirty = body && body.dirty;
+      if (!food.dirty) {
+        // Logged before the sheet existed (or on the GitHub version): it all still needs uploading.
+        food.dirty = { entries: {}, meals: {} };
+        for (const kind of ["entries", "meals"]) for (const x of Object.values(food.log[kind])) food.dirty[kind][x.id] = x.updated;
+      }
+      food.syncedAt = (body && body.dirty && body.syncedAt) || null;
+      food.sheet = (body && body.sheet) || null;
+      food.state = sheetUrl() ? (pendingCount() ? "pending" : "synced") : "local";
+      store.del("morningcheck.foodsync");          // the GitHub token from the first version, if one was saved
     })();
     return food.loaded;
   }
-  async function foodSaveLocal() {
-    store.set(FOOD_KEY, await sealed({ log: food.log, sha: food.sha, salt: food.salt, pending: food.pending, syncedAt: food.syncedAt }));
+  function foodSaveLocal() {
+    store.set(FOOD_KEY, JSON.stringify({ log: food.log, dirty: food.dirty, syncedAt: food.syncedAt, sheet: food.sheet }));
   }
-  function foodChange(fn) {
-    fn(food.log);
-    food.rev++;
-    food.pending = true;
-    if (food.sync && food.state !== "error") food.state = "pending";
+  function foodPut(kind, item) {
+    food.log[kind][item.id] = item;
+    food.dirty[kind][item.id] = item.updated;
+    if (sheetUrl() && food.state !== "error") food.state = "pending";
     foodSaveLocal();
     paintFood();
     clearTimeout(food.timer);
@@ -839,20 +824,16 @@
   }
   const stamp = () => new Date().toISOString();
   function logItem(date, slot, item) {
-    const now = new Date();
-    foodChange(log => {
-      const id = newId();
-      log.entries[id] = { id, date, slot, name: item.name, kcal: +item.kcal || 0, protein: +item.protein || 0, meal: item.id || null,
-        time: date === localToday() ? hhmm(now) : null, updated: stamp() };
-    });
+    foodPut("entries", { id: newId(), date, slot, name: item.name, kcal: +item.kcal || 0, protein: +item.protein || 0,
+      meal: item.id || null, time: date === localToday() ? hhmm(new Date()) : null, updated: stamp(), deleted: false });
   }
-  const setEntry = (id, deleted) => foodChange(log => { log.entries[id] = { ...log.entries[id], deleted, updated: stamp() }; });
+  const setEntry = (id, deleted) => foodPut("entries", { ...food.log.entries[id], deleted, updated: stamp() });
   function saveOption(slot, item) {
     const id = "m-" + newId();
-    foodChange(log => { log.meals[id] = { id, name: item.name, kcal: +item.kcal || 0, protein: +item.protein || 0, slots: [slot], updated: stamp() }; });
+    foodPut("meals", { id, name: item.name, kcal: +item.kcal || 0, protein: +item.protein || 0, slots: [slot], updated: stamp(), deleted: false });
     return id;
   }
-  const removeOption = m => foodChange(log => { log.meals[m.id] = { ...m, deleted: true, updated: stamp() }; });
+  const removeOption = m => foodPut("meals", { ...m, deleted: true, updated: stamp() });
   function mealOptions(slot) {
     const all = {};
     for (const m of (DATA.food && DATA.food.meals) || []) all[m.id] = { ...m };
@@ -863,97 +844,46 @@
     .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")) || String(a.updated).localeCompare(String(b.updated)));
   const sum = (xs, k) => xs.reduce((a, x) => a + (+x[k] || 0), 0);
 
-  function mergeLogs(a, b) {
-    const out = emptyLog();
-    for (const kind of ["entries", "meals"]) {
-      for (const src of [a, b]) {
-        for (const [id, x] of Object.entries((src && src[kind]) || {})) {
-          const cur = out[kind][id];
-          if (!cur || String(x.updated || "") > String(cur.updated || "")) out[kind][id] = x;
-        }
-      }
-    }
-    return out;
-  }
-  // Same content regardless of key order.
-  const canon = v => Array.isArray(v) ? `[${v.map(canon).join(",")}]`
-    : v && typeof v === "object" ? `{${Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",")}}` : JSON.stringify(v);
-
-  // ----- GitHub contents API -----
+  // ----- the sheet -----
   class SyncError extends Error {}
-  const GH = "https://api.github.com";
-  const ghHeaders = s => ({ Authorization: `Bearer ${s.token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" });
-  const ghFileUrl = s => `${GH}/repos/${s.repo}/contents/${s.path.split("/").map(encodeURIComponent).join("/")}`;
-  async function gh(s, url, opts = {}) {
+  // Plain fetches with a text body: no preflight, which Apps Script web apps can't answer.
+  async function sheetCall(body) {
     let r;
     try {
-      r = await fetch(url, { cache: "no-store", ...opts, headers: { ...ghHeaders(s), ...(opts.headers || {}) } });
+      r = body ? await fetch(sheetUrl(), { method: "POST", body: JSON.stringify(body), redirect: "follow" })
+        : await fetch(sheetUrl(), { cache: "no-store", redirect: "follow" });
     } catch (e) {
-      throw new SyncError(navigator.onLine === false ? "offline" : "network");
+      // Offline, or Google sent a sign-in page instead of data (the deployment isn't open to "Anyone").
+      throw new SyncError(navigator.onLine === false ? "offline"
+        : "Couldn't reach your food sheet. If it keeps happening, check the Apps Script deployment's “Who has access” is Anyone.");
     }
-    if (r.status === 401) throw new SyncError("GitHub rejected the token: it has expired or was mistyped.");
-    if (r.status === 403 || r.status === 429) {
-      throw new SyncError(r.headers.get("x-ratelimit-remaining") === "0" ? "GitHub's rate limit was hit; it will sync again shortly."
-        : `The token isn't allowed to write to ${s.repo}. Give it "Contents: Read and write" on that repository.`);
-    }
-    return r;
+    let j = null;
+    try { j = JSON.parse(await r.text()); } catch (e) { j = null; }
+    if (!j) throw new SyncError("Your food sheet didn't answer with data. Check the FOOD_SHEET_URL secret is the web app URL ending in /exec.");
+    if (!r.ok || !j.ok) throw new SyncError(j.error || `Your food sheet answered ${r.status}.`);
+    return j;
   }
-  async function why404(s) {
-    const branch = await gh(s, `${GH}/repos/${s.repo}/branches/${encodeURIComponent(s.branch)}`);
-    if (branch.ok) return null;                      // the file just doesn't exist yet
-    const repo = await gh(s, `${GH}/repos/${s.repo}`);
-    return repo.ok ? `${s.repo} has no "${s.branch}" branch.` : `Can't see ${s.repo}: check the name, and that the token includes that repository.`;
-  }
-  async function ghRead(s) {
-    const r = await gh(s, `${ghFileUrl(s)}?ref=${encodeURIComponent(s.branch)}`);
-    if (r.status === 404) {
-      const problem = await why404(s);
-      if (problem) throw new SyncError(problem);
-      return { sha: null, env: null };
-    }
-    if (!r.ok) throw new SyncError(`GitHub answered ${r.status} when reading the log.`);
-    const j = await r.json();
-    return { sha: j.sha, env: JSON.parse(new TextDecoder().decode(b64(String(j.content || "").replace(/\s/g, "")))) };
-  }
-  async function ghWrite(s, env, sha) {
-    const body = { message: "Food log", branch: s.branch, content: toB64(new TextEncoder().encode(JSON.stringify(env))) };
-    if (sha) body.sha = sha;
-    const r = await gh(s, ghFileUrl(s), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (r.status === 409 || r.status === 422) return null;      // someone saved in between: read and merge again
-    if (!r.ok) throw new SyncError(`GitHub answered ${r.status} when saving the log.`);
-    return (await r.json()).content.sha;
-  }
-  // Read the log, merge in this device's changes, write it back if anything is new.
+  // Send what changed here (in batches), take the sheet's log, keep anything newer on this device.
   async function foodSyncOnce() {
-    const s = food.sync, rev = food.rev;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const remote = await ghRead(s);
-      let theirs = emptyLog();
-      if (remote.env) {
-        try { theirs = await unseal(remote.env); } catch (e) {
-          throw new SyncError("The saved log doesn't open with this passphrase. Was the dashboard passphrase changed?");
+    for (let round = 0; round < 20; round++) {
+      const send = {};
+      for (const kind of ["entries", "meals"]) send[kind] = Object.keys(food.dirty[kind]).slice(0, 400).map(id => food.log[kind][id]).filter(Boolean);
+      const sending = send.entries.length + send.meals.length;
+      const res = await sheetCall(sending ? send : null);
+      for (const kind of ["entries", "meals"]) {
+        for (const [id, x] of Object.entries(res[kind] || {})) {
+          const mine = food.log[kind][id];
+          if (!mine || String(x.updated || "") > String(mine.updated || "")) food.log[kind][id] = x;
         }
-        food.salt = remote.env.salt;
+        for (const x of send[kind]) if (food.dirty[kind][x.id] === x.updated) delete food.dirty[kind][x.id];
       }
-      const merged = mergeLogs(theirs, food.log);
-      food.log = mergeLogs(merged, food.log);   // keep anything logged while this ran
-      if (canon(merged) !== canon(theirs)) {
-        const env = await seal(merged, food.salt);
-        food.salt = env.salt;
-        const sha = await ghWrite(s, env, remote.sha);
-        if (!sha) continue;
-        food.sha = sha;
-      } else {
-        food.sha = remote.sha;
-      }
-      food.pending = food.rev !== rev;
+      food.sheet = res.sheet || food.sheet;
       food.syncedAt = stamp();
-      return;
+      if (!sending || !pendingCount()) return;
     }
-    throw new SyncError("Another device kept saving at the same moment; it will try again shortly.");
   }
   async function foodSync() {
-    if (!food.loaded || !food.sync || !canSync()) return;
+    if (!food.loaded || !sheetUrl()) return;
     await food.loaded;
     if (food.busy) { food.again = true; return food.busy; }
     food.state = "syncing";
@@ -961,32 +891,18 @@
     food.busy = (async () => {
       try {
         await foodSyncOnce();
-        food.state = food.pending ? "pending" : "synced";
+        food.state = pendingCount() ? "pending" : "synced";
         food.error = "";
       } catch (e) {
-        const offline = e.message === "offline" || e.message === "network";
-        food.state = offline ? "offline" : "error";
-        food.error = offline ? "" : e.message;
-        if (!(e instanceof SyncError)) food.error = "Couldn't sync: " + e.message;
+        food.state = e.message === "offline" ? "offline" : "error";
+        food.error = e instanceof SyncError ? (e.message === "offline" ? "" : e.message) : "Couldn't sync: " + e.message;
       }
-      await foodSaveLocal();
+      foodSaveLocal();
       food.busy = null;
       paintFood();
       if (food.again) { food.again = false; foodSync(); }
     })();
     return food.busy;
-  }
-  async function saveSyncSettings(s) {
-    food.sync = s;
-    store.set(FOOD_SYNC_KEY, await sealed(s));
-    food.error = "";
-    await foodSync();
-  }
-  function forgetSync() {
-    food.sync = null;
-    food.state = "local";
-    store.del(FOOD_SYNC_KEY);
-    renderTab();
   }
 
   // ----- the tab -----
@@ -1154,78 +1070,41 @@
         h("span", { class: "num small" }, macro(x)))))] : null);
   }
   function syncLine() {
-    const s = food.sync;
-    if (!canSync()) return "Demo: what you log stays in this browser.";
-    if (!s) return "Not syncing: what you log stays on this device.";
+    if (DATA.demo) return "Demo: what you log stays in this browser.";
+    if (!sheetUrl()) return "";
     const ago = food.syncedAt ? ` · last synced ${new Date(food.syncedAt).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "";
-    return { syncing: "Syncing…", synced: "Synced with GitHub" + ago, pending: "Saved on this device, syncing shortly" + ago,
-      offline: "Offline: saved on this device, it syncs when you're back online" + ago, error: food.error, local: "" }[food.state] || "";
+    const n = pendingCount();
+    return { syncing: "Syncing…", synced: "Up to date" + ago,
+      pending: `${n} change${n === 1 ? "" : "s"} saved on this device, syncing shortly` + ago,
+      offline: "Offline: saved on this device, it syncs when you're back online" + ago,
+      error: food.error + (n ? ` ${n} change${n === 1 ? " is" : "s are"} saved on this device until then.` : ""), local: "" }[food.state] || "";
   }
   function paintSync() {
     if (!foodShown() || !foodView.status) return;
     foodView.status.textContent = syncLine();
     foodView.status.className = "sync-status small " + (food.state === "error" ? "err" : "muted");
+    if (foodView.open) {
+      foodView.open.hidden = !food.sheet;
+      if (food.sheet) foodView.open.href = food.sheet;
+    }
   }
   function buildSync() {
-    const v = foodView, s = food.sync, cfg = (DATA.food && DATA.food.store) || {};
+    const v = foodView;
     v.status = h("p", { class: "sync-status small muted", role: "status" });
-    if (!canSync()) {
+    if (DATA.demo) {
       v.syncCard.replaceChildren(band("Sync", "Demo mode"), v.status);
       return;
     }
-    if (s) {
-      v.syncCard.replaceChildren(band("Sync", "Saved to GitHub", `${s.repo} · ${s.branch} · ${s.path}`), v.status,
-        h("div", { class: "row-gap" },
-          h("button", { type: "button", class: "btn sm", onclick: () => foodSync() }, "Sync now"),
-          h("button", { type: "button", class: "linkbtn small", onclick: () => showSetup(s) }, "Change token"),
-          h("button", { type: "button", class: "linkbtn small", onclick: forgetSync }, "Stop syncing on this device")),
-        h("p", { class: "small muted" }, "The log is encrypted with your dashboard passphrase before it leaves this device; GitHub only stores the scrambled file."));
+    if (!sheetUrl()) {
+      const n = pendingCount();
+      v.syncCard.replaceChildren(band("Sync", "Not syncing yet"), v.status,
+        h("p", { class: "note" }, "What you log stays on this device until your food sheet is set up (README → Food log: a Google Sheet and the FOOD_SHEET_URL secret, about 5 minutes, once)."
+          + (n ? ` The ${n} item${n === 1 ? "" : "s"} logged here so far upload on the first sync.` : "")));
       return;
     }
-    showSetup({ repo: cfg.repo || "", branch: cfg.branch || "food-log", path: cfg.path || "food.enc.json" });
-  }
-  function showSetup(defaults) {
-    const v = foodView;
-    const token = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "github_pat_…", "aria-label": "GitHub token" });
-    const repo = h("input", { type: "text", value: defaults.repo, "aria-label": "Repository (owner/name)", spellcheck: "false" });
-    const branch = h("input", { type: "text", value: defaults.branch, "aria-label": "Branch", spellcheck: "false" });
-    const path = h("input", { type: "text", value: defaults.path, "aria-label": "File", spellcheck: "false" });
-    const err = h("p", { class: "err small", role: "alert" });
-    const btn = h("button", { type: "submit", class: "btn sm" }, "Save and sync");
-    const form = h("form", { class: "setup" },
-      h("ol", { class: "steps note" },
-        h("li", null, "Open ", h("a", { href: "https://github.com/settings/personal-access-tokens/new", target: "_blank", rel: "noopener" }, "a new fine-grained token"), " on GitHub."),
-        h("li", null, "Repository access: ", h("strong", null, "Only select repositories"), ", pick ", h("strong", null, defaults.repo || "the repo below"), "."),
-        h("li", null, "Repository permissions: ", h("strong", null, "Contents: Read and write"), ". Nothing else."),
-        h("li", null, "Generate it, then paste it here. Do this once on each device you log from.")),
-      h("label", { class: "field" }, h("span", { class: "tile-label" }, "Token"), token),
-      h("details", { class: "where" }, h("summary", { class: "small" }, "Where the log is saved"),
-        h("div", { class: "where-fields" },
-          h("label", { class: "field" }, h("span", { class: "tile-label" }, "Repository"), repo),
-          h("label", { class: "field" }, h("span", { class: "tile-label" }, "Branch"), branch),
-          h("label", { class: "field" }, h("span", { class: "tile-label" }, "File"), path))),
-      h("div", { class: "row-gap" }, btn, food.sync ? h("button", { type: "button", class: "linkbtn small", onclick: () => { buildSync(); paintSync(); } }, "Cancel") : null),
-      err,
-      h("p", { class: "small muted" }, "The token is kept on this device, encrypted with your passphrase. Anyone holding it could change that repository, so give it access to that one repo only."));
-    form.addEventListener("submit", async e => {
-      e.preventDefault();
-      const s = { token: token.value.trim(), repo: repo.value.trim().replace(/^https:\/\/github\.com\//, "").replace(/\/$/, ""),
-        branch: branch.value.trim() || "food-log", path: path.value.trim() || "food.enc.json" };
-      if (!s.token || !/^[\w.-]+\/[\w.-]+$/.test(s.repo)) { err.textContent = "Paste the token, and give the repository as owner/name."; return; }
-      btn.disabled = true; err.textContent = "";
-      const before = food.sync;
-      await saveSyncSettings(s);
-      btn.disabled = false;
-      if (food.state === "error") {
-        err.textContent = food.error;
-        food.sync = before;
-        if (before) store.set(FOOD_SYNC_KEY, await sealed(before)); else store.del(FOOD_SYNC_KEY);
-        food.state = before ? "pending" : "local";
-        return;
-      }
-      buildSync(); paintSync();
-    });
-    v.syncCard.replaceChildren(band("Sync", "Save your log to GitHub", "So every device you log from sees the same meals"), v.status, form);
+    v.open = h("a", { class: "small", target: "_blank", rel: "noopener", hidden: true }, "Open in Google Sheets");
+    v.syncCard.replaceChildren(band("Sync", "Saved to your Google Sheet", "Every device you log from sees the same meals"), v.status,
+      h("div", { class: "row-gap" }, h("button", { type: "button", class: "btn sm", onclick: () => foodSync() }, "Sync now"), v.open));
   }
 
   // ---------- Tournaments ----------

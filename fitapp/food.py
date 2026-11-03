@@ -1,10 +1,10 @@
 """Food logging settings for the dashboard.
 
-The log itself never passes through the pipeline: the site encrypts it with the
-dashboard passphrase and saves it to GitHub (``store`` below). The pipeline only
+The log lives in a Google Sheet behind the Apps Script web app in
+``apps-script/food-log.gs``; the site reads and writes it directly. The pipeline
 publishes the meal options (and which of breakfast, lunch, dinner, snacks and
-misc each belongs to), the daily targets and where the log lives, all inside
-the encrypted data.
+misc each belongs to), the daily targets, and the web app's URL from the
+FOOD_SHEET_URL secret, which only ever goes into the encrypted data.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _range(value: Any) -> list[float] | None:
     return [n, n] if n is not None else None
 
 
-def settings(cfg: dict) -> dict[str, Any]:
+def settings(cfg: dict, url: str | None = None) -> dict[str, Any]:
     food = cfg.get("food") or {}
     meals, seen = [], set()
     for m in food.get("meals") or []:
@@ -51,10 +51,9 @@ def settings(cfg: dict) -> dict[str, Any]:
         slots = [x for x in (m.get("slots") or []) if x in SLOTS] or ["misc"]
         meals.append({"id": mid, "name": name, "kcal": kcal, "protein": _num(m.get("protein")) or 0, "slots": slots})
     targets = food.get("targets") or {}
-    store = food.get("store") or {}
+    url = (url or "").strip()
     return {
         "meals": meals,
         "targets": {"kcal": _range(targets.get("kcal")), "protein": _range(targets.get("protein"))},
-        "store": {"repo": str(store.get("repo") or ""), "branch": str(store.get("branch") or "food-log"),
-                  "path": str(store.get("path") or "food.enc.json")},
+        "store": {"url": url if url.startswith("https://script.google.com/") else ""},
     }

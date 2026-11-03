@@ -12,7 +12,7 @@ data every morning and published on GitHub Pages. It has five parts:
 | **Alcohol by month** | On the Month tab: evenings, drinks and drinks by type for each month against the one before, your biggest evening, and what drinking does to your next-morning HRV. Amounts come from Garmin's lifestyle log, or lines like `27/10 3 beers` in your recovery tags note. Evenings you drank get an orange dot on the calendar. |
 | **Month view and week in review** | A calendar of 16 weeks of morning colours and daily load; tap any day to see why it got its colour, what you did and what happened the day before. Mornings by weekday shows which days tend to be red (Mondays after weekend tournaments, say). The week in review compares each Monday-to-Sunday week with the one before: load, sessions, rest days, colours, HRV, sleep, bedtime, alcohol, gym sets per body part and the warnings raised. It also shows on the Today tab on Sundays and Mondays. |
 | **Injury early-warning** | Scans for the patterns that come before strains: pain and soreness you noted, a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, HRV stuck under baseline, gym sets per body part jumping above their 4-week average, the first session back after two weeks off, and alcohol (from Garmin's lifestyle log or your notes). Add your glute strain date and it shows what the day before it looked like and warns when today matches. |
-| **Food log** | A Food tab with breakfast, lunch, dinner, snacks and misc. Tap one of your usual meals under each (set in `config.yml`), add anything else with its calories, and save it as a new option if you'll have it again. Calories and protein for the day against your targets, and a Monday-to-Sunday summary with your average calories per day and what you ate. Syncs between your devices through GitHub, encrypted with your passphrase. |
+| **Food log** | A Food tab with breakfast, lunch, dinner, snacks and misc. Tap one of your usual meals under each (set in `config.yml`), add anything else with its calories, and save it as a new option if you'll have it again. Calories and protein for the day against your targets, and a Monday-to-Sunday summary with your average calories per day and what you ate. Saved to a Google Sheet you can open, so every device sees the same log. |
 | **Upcoming events** | Lists future frisbee events from your calendar (tryouts, Pesca Disco, EBUCC, Gurls Hat…) with a countdown, the venue, and the flights around each one. Optionally looks up each event's venue and surface for free with Gemini and Google Search. |
 
 Until you add your secrets the site shows **demo data** with a banner, so you
@@ -214,27 +214,28 @@ days against your target, and everything you ate.
 
 The usual meals and targets live under `food:` in `config.yml`.
 
-**Syncing between devices.** The log is a single file encrypted with your
-dashboard passphrase in your browser, then saved to GitHub with the contents API.
-GitHub only ever stores the scrambled file. By default it goes to
-`food.enc.json` on this repository's `food-log` branch; pushes to that branch
-don't trigger any workflow. Each device you log from needs a token, once:
+**Where the log is saved: a Google Sheet** (about 5 minutes, once). No sign-in
+or token is needed on your devices; unlocking the dashboard is enough.
 
-1. On GitHub, create a [fine-grained token](https://github.com/settings/personal-access-tokens/new).
-2. **Repository access:** *Only select repositories* → the repository in `food.store.repo`.
-3. **Repository permissions:** *Contents: Read and write*. Nothing else.
-4. Paste it into the Sync card on the Food tab.
+1. Create a new Google Sheet (any name, e.g. *Food log*), then **Extensions → Apps Script**.
+2. Delete the code there, paste in [`apps-script/food-log.gs`](apps-script/food-log.gs), and save.
+3. **Deploy → New deployment**, type **Web app**. *Execute as:* **Me**. *Who has access:*
+   **Anyone**. Deploy, then allow access when Google asks (it's your own script, so
+   choose *Advanced → Go to … (unsafe)* if it warns you).
+4. Copy the **Web app URL** (it ends in `/exec`) into a repository secret named
+   `FOOD_SHEET_URL` (**Settings → Secrets and variables → Actions**).
+5. Run **Actions → Refresh dashboard → Run workflow**, or wait for the next run.
 
-The token is stored on that device encrypted with your passphrase. Without a
-token, entries stay on that device only. Logging works offline and syncs when
-you're back online; entries logged on two devices at once are merged, not
-overwritten.
+The sheet gets two tabs: `entries`, one row per thing you ate, and `meals`, the
+options you added. You can read, sort and sum them in Sheets. Removed items stay
+as rows marked `deleted = TRUE`, so your other devices learn about the removal.
+Each device keeps its own copy too, so logging works offline and catches up when
+you're back online. Meals logged on two phones at once are both kept.
 
-**Keeping the token away from the site.** A token with write access to this
-repository could change the site itself. To rule that out, create a small
-private repository for the log (with a README so it has a `main` branch), set
-`food.store` to `{repo: you/that-repo, branch: main, path: food.enc.json}`, and
-give the token access to that repository only.
+The web app URL is the only key to the sheet. It reaches the page only inside
+the encrypted dashboard data and never appears in this public repository. If you
+change the script, use **Deploy → Manage deployments → Edit → New version** so the
+URL stays the same.
 
 ## Run it locally
 

@@ -139,9 +139,7 @@ food:
     - {name: "Potato meal (chicken thigh)", kcal: 1040, protein: 58, slots: [lunch, dinner]}
     - {name: "Potato meal (chicken breast)", kcal: 935, protein: 67, slots: [lunch, dinner]}
     - {name: "Skyr bowl (skyr + whey)", kcal: 245, protein: 44, slots: [snacks]}
-  # The site saves the log here, encrypted with your dashboard passphrase.
-  # Use a separate private repo to keep the sync token away from this one.
-  store: {repo: vishwaa13/fitnessApp, branch: food-log, path: food.enc.json}
+  # The log itself is saved to a Google Sheet: README → Food log.
 
 # ---------------------------------------------------------------------------
 # Injury early-warning (the "when could I get injured" part)
