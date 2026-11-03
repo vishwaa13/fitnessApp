@@ -111,6 +111,12 @@ DEFAULTS: dict[str, Any] = {
         "look_ahead_days": 365,
         "gemini_models": ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"],
     },
+    "food": {
+        "meals": [],
+        "targets": {"kcal": None, "protein": None},
+        # Where the site saves your encrypted food log (see README: Food log).
+        "store": {"repo": "", "branch": "food-log", "path": "food.enc.json"},
+    },
     "recovery": {
         "keep_tags_note_title": "recovery tags",
         "late_training_hour": 20,

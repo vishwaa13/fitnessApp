@@ -125,6 +125,25 @@ recovery:
   window_days: 180
 
 # ---------------------------------------------------------------------------
+# Food log (the Food tab)
+# ---------------------------------------------------------------------------
+# Each day has breakfast, lunch, dinner, snacks and misc. These are the options
+# offered under each one; options you add on the site sync with your log.
+# Targets are [low, high] per day.
+food:
+  targets:
+    kcal: [2850, 3100]
+    protein: [200, 220]
+  meals:
+    - {name: "Granola (150 g) + milk", kcal: 750, protein: 40, slots: [breakfast]}
+    - {name: "Potato meal (chicken thigh)", kcal: 1040, protein: 58, slots: [lunch, dinner]}
+    - {name: "Potato meal (chicken breast)", kcal: 935, protein: 67, slots: [lunch, dinner]}
+    - {name: "Skyr bowl (skyr + whey)", kcal: 245, protein: 44, slots: [snacks]}
+  # The site saves the log here, encrypted with your dashboard passphrase.
+  # Use a separate private repo to keep the sync token away from this one.
+  store: {repo: vishwaa13/fitnessApp, branch: food-log, path: food.enc.json}
+
+# ---------------------------------------------------------------------------
 # Injury early-warning (the "when could I get injured" part)
 # ---------------------------------------------------------------------------
 injury:

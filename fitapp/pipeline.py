@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from . import cache as cache_mod
 from . import alcohol as alcohol_mod
-from . import gymload, injury, overload, readiness, recovery, sleep, tournaments, weekly
+from . import food, gymload, injury, overload, readiness, recovery, sleep, tournaments, weekly
 from .crypto import encrypt_json
 from .gymlog import Session, parse_drinks, parse_gym_log, parse_soreness, parse_tags_note
 from .util import d, has_keyword
@@ -211,6 +211,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
         "alcohol": {"evenings": evenings, "months": alcohol_mod.months(evenings, today)},
         "recent_activities": recent,
         "events": upcoming_events or [],
+        "food": food.settings(cfg),
     })
 
 

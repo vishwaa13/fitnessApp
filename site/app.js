@@ -5,8 +5,9 @@
   const C = window.Charts;
   const app = document.getElementById("app");
   const PASS_KEY = "morningcheck.pass";
-  const TABS = [["today", "Today"], ["month", "Month"], ["events", "Events"], ["recovery", "Recovery"], ["tournaments", "Tournaments"], ["strength", "Strength"], ["load", "Load & injury"]];
+  const TABS = [["today", "Today"], ["food", "Food"], ["month", "Month"], ["events", "Events"], ["recovery", "Recovery"], ["tournaments", "Tournaments"], ["strength", "Strength"], ["load", "Load & injury"]];
   let DATA = null;
+  let PASS = null;          // kept in memory to seal the food log with the same passphrase
   let recRange = 90;
   let recMetric = "hrv";
   let monthIdx = null, monthPick = null, weekIdx = null;
@@ -39,6 +40,8 @@
   const STATUS_CHIP = { red: "Take it easy", amber: "Train with a cap", green: "Go hard", unknown: "Waiting for sync" };
   const STATUS_MARK = { red: "✕", amber: "!", green: "✓", unknown: "·" };
   const chip = (cls, label) => h("span", { class: "chip " + cls }, label);
+  // replaceChildren, but with h()'s rules: nested lists flatten, null and false are skipped.
+  const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false));
 
   // ---------- loading + decryption ----------
   function b64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); }
@@ -64,7 +67,7 @@
     if (env && env.ct) {
       const saved = store.get(PASS_KEY);
       if (saved) {
-        try { return start(await decrypt(env, saved)); } catch (e) { store.del(PASS_KEY); }
+        try { const data = await decrypt(env, saved); PASS = saved; return start(data); } catch (e) { store.del(PASS_KEY); }
       }
       return lockScreen(env);
     }
@@ -90,6 +93,7 @@
       try {
         const data = await decrypt(env, input.value);
         if (remember.checked) store.set(PASS_KEY, input.value);
+        PASS = input.value;
         start(data);
       } catch (x) {
         err.textContent = "That passphrase didn't unlock the data. Check it matches the DASHBOARD_PASSPHRASE secret exactly.";
@@ -106,7 +110,10 @@
     render();
     window.addEventListener("hashchange", render);
     let t;
-    window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(renderTab, 150); });
+    // Not on the Food tab: a phone's keyboard opening is a resize, and redrawing would wipe what you're typing.
+    window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => { if (currentTab() !== "food") renderTab(); }, 150); });
+    // Back on the page: pick up meals logged on another device.
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") foodSync(); });
   }
   function currentTab() {
     const id = location.hash.replace("#", "");
@@ -161,7 +168,7 @@
     const tab = currentTab();
     document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", String(TABS[i][0] === tab)));
     panel.replaceChildren();
-    ({ today: renderToday, month: renderMonth, events: renderEvents, recovery: renderRecovery, tournaments: renderTournaments, strength: renderStrength, load: renderLoad })[tab](panel);
+    ({ today: renderToday, food: renderFood, month: renderMonth, events: renderEvents, recovery: renderRecovery, tournaments: renderTournaments, strength: renderStrength, load: renderLoad })[tab](panel);
   }
   const go = id => h("a", { href: "#" + id }, "Open");
 
@@ -752,6 +759,473 @@
 
   function confidenceText(c) {
     return { clear: "Clear effect", possible: "Possible", none: "No effect seen", too_few: "Too few nights" }[c] || c;
+  }
+
+  // ---------- Food ----------
+  // The log is sealed with the dashboard passphrase and saved to a GitHub repo (DATA.food.store)
+  // through the contents API, with a token you paste once per device. This device keeps a sealed
+  // copy too, so logging works offline and syncs later. Entries and meal options merge by id
+  // (newest edit wins, removals included), so two devices logging at once don't overwrite each other.
+  const FOOD_KEY = "morningcheck.food", FOOD_SYNC_KEY = "morningcheck.foodsync";
+  const SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"], ["misc", "Misc"]];
+  const food = { log: null, sha: null, salt: null, rev: 0, pending: false, syncedAt: null, sync: null,
+    state: "local", error: "", loaded: null, busy: null, again: false, timer: null };
+  let foodDay = null, foodWeekOffset = 0, foodView = null;
+  const kc = v => Math.round(v || 0).toLocaleString();
+  const emptyLog = () => ({ v: 1, entries: {}, meals: {} });
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const hhmm = dt => `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+  const localToday = () => isoDay(new Date());
+  const addDays = (iso, n) => { const dt = C.parseDay(iso); dt.setDate(dt.getDate() + n); return isoDay(dt); };
+  const mondayOf = iso => addDays(iso, -((C.parseDay(iso).getDay() + 6) % 7));
+
+  // AES-GCM with a PBKDF2 key, the same envelope fitapp/crypto.py writes. Keys are cached per salt:
+  // deriving one takes a noticeable moment on a phone.
+  const keys = new Map();
+  function aesKey(pass, salt, iter) {
+    const id = `${salt}:${iter}`;
+    if (!keys.has(id)) keys.set(id, crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"])
+      .then(base => crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(salt), iterations: iter, hash: "SHA-256" },
+        base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])));
+    return keys.get(id);
+  }
+  function toB64(bytes) {
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(out);
+  }
+  async function seal(obj, salt) {
+    salt = salt || toB64(crypto.getRandomValues(new Uint8Array(16)));
+    const iv = crypto.getRandomValues(new Uint8Array(12)), iter = 310000;
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(PASS, salt, iter), new TextEncoder().encode(JSON.stringify(obj)));
+    return { v: 1, kdf: "PBKDF2-SHA256", iter, salt, iv: toB64(iv), ct: toB64(new Uint8Array(ct)) };
+  }
+  async function unseal(env) {
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(env.iv) }, await aesKey(PASS, env.salt, env.iter), b64(env.ct));
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+  // Without a passphrase (the demo) nothing is sealed and nothing syncs.
+  const sealed = async obj => JSON.stringify(PASS ? await seal(obj) : obj);
+  const canSync = () => !DATA.demo && !!PASS;
+  async function opened(raw) {
+    const j = raw && JSON.parse(raw);
+    return j && j.ct ? (PASS ? unseal(j) : null) : j;
+  }
+
+  function foodLoad() {
+    if (!food.loaded) food.loaded = (async () => {
+      let body = null, sync = null;
+      try { body = await opened(store.get(FOOD_KEY)); } catch (e) { body = null; }
+      try { sync = await opened(store.get(FOOD_SYNC_KEY)); } catch (e) { sync = null; }
+      food.log = (body && body.log) || emptyLog();
+      Object.assign(food, { sha: body && body.sha || null, salt: body && body.salt || null, pending: !!(body && body.pending),
+        syncedAt: body && body.syncedAt || null, sync: canSync() ? sync : null });
+      food.state = food.sync ? (food.pending ? "pending" : "synced") : "local";
+    })();
+    return food.loaded;
+  }
+  async function foodSaveLocal() {
+    store.set(FOOD_KEY, await sealed({ log: food.log, sha: food.sha, salt: food.salt, pending: food.pending, syncedAt: food.syncedAt }));
+  }
+  function foodChange(fn) {
+    fn(food.log);
+    food.rev++;
+    food.pending = true;
+    if (food.sync && food.state !== "error") food.state = "pending";
+    foodSaveLocal();
+    paintFood();
+    clearTimeout(food.timer);
+    food.timer = setTimeout(foodSync, 1200);
+  }
+  const stamp = () => new Date().toISOString();
+  function logItem(date, slot, item) {
+    const now = new Date();
+    foodChange(log => {
+      const id = newId();
+      log.entries[id] = { id, date, slot, name: item.name, kcal: +item.kcal || 0, protein: +item.protein || 0, meal: item.id || null,
+        time: date === localToday() ? hhmm(now) : null, updated: stamp() };
+    });
+  }
+  const setEntry = (id, deleted) => foodChange(log => { log.entries[id] = { ...log.entries[id], deleted, updated: stamp() }; });
+  function saveOption(slot, item) {
+    const id = "m-" + newId();
+    foodChange(log => { log.meals[id] = { id, name: item.name, kcal: +item.kcal || 0, protein: +item.protein || 0, slots: [slot], updated: stamp() }; });
+    return id;
+  }
+  const removeOption = m => foodChange(log => { log.meals[m.id] = { ...m, deleted: true, updated: stamp() }; });
+  function mealOptions(slot) {
+    const all = {};
+    for (const m of (DATA.food && DATA.food.meals) || []) all[m.id] = { ...m };
+    for (const [id, m] of Object.entries(food.log.meals || {})) all[id] = { ...(all[id] || {}), ...m };
+    return Object.values(all).filter(m => !m.deleted && (m.slots || ["misc"]).includes(slot));
+  }
+  const entriesOn = date => Object.values(food.log.entries).filter(e => !e.deleted && e.date === date)
+    .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")) || String(a.updated).localeCompare(String(b.updated)));
+  const sum = (xs, k) => xs.reduce((a, x) => a + (+x[k] || 0), 0);
+
+  function mergeLogs(a, b) {
+    const out = emptyLog();
+    for (const kind of ["entries", "meals"]) {
+      for (const src of [a, b]) {
+        for (const [id, x] of Object.entries((src && src[kind]) || {})) {
+          const cur = out[kind][id];
+          if (!cur || String(x.updated || "") > String(cur.updated || "")) out[kind][id] = x;
+        }
+      }
+    }
+    return out;
+  }
+  // Same content regardless of key order.
+  const canon = v => Array.isArray(v) ? `[${v.map(canon).join(",")}]`
+    : v && typeof v === "object" ? `{${Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",")}}` : JSON.stringify(v);
+
+  // ----- GitHub contents API -----
+  class SyncError extends Error {}
+  const GH = "https://api.github.com";
+  const ghHeaders = s => ({ Authorization: `Bearer ${s.token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" });
+  const ghFileUrl = s => `${GH}/repos/${s.repo}/contents/${s.path.split("/").map(encodeURIComponent).join("/")}`;
+  async function gh(s, url, opts = {}) {
+    let r;
+    try {
+      r = await fetch(url, { cache: "no-store", ...opts, headers: { ...ghHeaders(s), ...(opts.headers || {}) } });
+    } catch (e) {
+      throw new SyncError(navigator.onLine === false ? "offline" : "network");
+    }
+    if (r.status === 401) throw new SyncError("GitHub rejected the token: it has expired or was mistyped.");
+    if (r.status === 403 || r.status === 429) {
+      throw new SyncError(r.headers.get("x-ratelimit-remaining") === "0" ? "GitHub's rate limit was hit; it will sync again shortly."
+        : `The token isn't allowed to write to ${s.repo}. Give it "Contents: Read and write" on that repository.`);
+    }
+    return r;
+  }
+  async function why404(s) {
+    const branch = await gh(s, `${GH}/repos/${s.repo}/branches/${encodeURIComponent(s.branch)}`);
+    if (branch.ok) return null;                      // the file just doesn't exist yet
+    const repo = await gh(s, `${GH}/repos/${s.repo}`);
+    return repo.ok ? `${s.repo} has no "${s.branch}" branch.` : `Can't see ${s.repo}: check the name, and that the token includes that repository.`;
+  }
+  async function ghRead(s) {
+    const r = await gh(s, `${ghFileUrl(s)}?ref=${encodeURIComponent(s.branch)}`);
+    if (r.status === 404) {
+      const problem = await why404(s);
+      if (problem) throw new SyncError(problem);
+      return { sha: null, env: null };
+    }
+    if (!r.ok) throw new SyncError(`GitHub answered ${r.status} when reading the log.`);
+    const j = await r.json();
+    return { sha: j.sha, env: JSON.parse(new TextDecoder().decode(b64(String(j.content || "").replace(/\s/g, "")))) };
+  }
+  async function ghWrite(s, env, sha) {
+    const body = { message: "Food log", branch: s.branch, content: toB64(new TextEncoder().encode(JSON.stringify(env))) };
+    if (sha) body.sha = sha;
+    const r = await gh(s, ghFileUrl(s), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r.status === 409 || r.status === 422) return null;      // someone saved in between: read and merge again
+    if (!r.ok) throw new SyncError(`GitHub answered ${r.status} when saving the log.`);
+    return (await r.json()).content.sha;
+  }
+  // Read the log, merge in this device's changes, write it back if anything is new.
+  async function foodSyncOnce() {
+    const s = food.sync, rev = food.rev;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const remote = await ghRead(s);
+      let theirs = emptyLog();
+      if (remote.env) {
+        try { theirs = await unseal(remote.env); } catch (e) {
+          throw new SyncError("The saved log doesn't open with this passphrase. Was the dashboard passphrase changed?");
+        }
+        food.salt = remote.env.salt;
+      }
+      const merged = mergeLogs(theirs, food.log);
+      food.log = mergeLogs(merged, food.log);   // keep anything logged while this ran
+      if (canon(merged) !== canon(theirs)) {
+        const env = await seal(merged, food.salt);
+        food.salt = env.salt;
+        const sha = await ghWrite(s, env, remote.sha);
+        if (!sha) continue;
+        food.sha = sha;
+      } else {
+        food.sha = remote.sha;
+      }
+      food.pending = food.rev !== rev;
+      food.syncedAt = stamp();
+      return;
+    }
+    throw new SyncError("Another device kept saving at the same moment; it will try again shortly.");
+  }
+  async function foodSync() {
+    if (!food.loaded || !food.sync || !canSync()) return;
+    await food.loaded;
+    if (food.busy) { food.again = true; return food.busy; }
+    food.state = "syncing";
+    paintSync();
+    food.busy = (async () => {
+      try {
+        await foodSyncOnce();
+        food.state = food.pending ? "pending" : "synced";
+        food.error = "";
+      } catch (e) {
+        const offline = e.message === "offline" || e.message === "network";
+        food.state = offline ? "offline" : "error";
+        food.error = offline ? "" : e.message;
+        if (!(e instanceof SyncError)) food.error = "Couldn't sync: " + e.message;
+      }
+      await foodSaveLocal();
+      food.busy = null;
+      paintFood();
+      if (food.again) { food.again = false; foodSync(); }
+    })();
+    return food.busy;
+  }
+  async function saveSyncSettings(s) {
+    food.sync = s;
+    store.set(FOOD_SYNC_KEY, await sealed(s));
+    food.error = "";
+    await foodSync();
+  }
+  function forgetSync() {
+    food.sync = null;
+    food.state = "local";
+    store.del(FOOD_SYNC_KEY);
+    renderTab();
+  }
+
+  // ----- the tab -----
+  async function renderFood(panel) {
+    if (!foodDay) foodDay = localToday();
+    if (food.loaded === null || !food.log) {
+      panel.append(h("p", { class: "muted" }, "Opening your food log…"));
+      await foodLoad();
+      if (currentTab() !== "food") return;
+      panel.replaceChildren();
+    }
+    foodView = { panel, dayCard: h("section", { class: "card kind kind-food" }), weekCard: h("section", { class: "card kind kind-food" }),
+      syncCard: h("section", { class: "card kind kind-review" }), forms: {} };
+    buildDay();
+    buildSync();
+    panel.append(h("div", { class: "food-layout" }, foodView.dayCard, foodView.weekCard, foodView.syncCard));
+    paintFood();
+    foodSync();
+  }
+  const foodShown = () => foodView && document.body.contains(foodView.dayCard);
+  function paintFood() {
+    if (!foodShown()) return;
+    paintDay();
+    paintWeek();
+    paintSync();
+  }
+  function meter(label, value, range, unit) {
+    const head = h("div", { class: "meter-head" }, h("span", { class: "tile-label" }, label),
+      h("span", { class: "meter-val" }, h("b", null, kc(value) + unit), range ? ` of ${kc(range[0])}–${kc(range[1])}${unit}` : ""));
+    if (!range) return h("div", { class: "meter" }, head);
+    const [lo, hi] = range, top = Math.max(hi * 1.15, value);
+    const state = value < lo ? `${kc(lo - value)}–${kc(hi - value)}${unit} to go` : value > hi ? `${kc(value - hi)}${unit} over your target` : "In your target range";
+    return h("div", { class: "meter" }, head,
+      h("div", { class: "meter-track", role: "img", "aria-label": `${label} ${kc(value)}${unit}, target ${kc(lo)} to ${kc(hi)}${unit}` },
+        h("span", { class: "meter-band", style: `left:${(lo / top) * 100}%;width:${((hi - lo) / top) * 100}%` }),
+        h("span", { class: "meter-fill", style: `width:${Math.min(100, (value / top) * 100)}%` })),
+      h("span", { class: "tile-detail" }, state));
+  }
+  const macro = x => `${kc(x.kcal)} kcal` + (x.protein ? ` · ${kc(x.protein)} g protein` : "");
+  function buildDay() {
+    const v = foodView, today = localToday();
+    const nav = (step, label) => h("button", { type: "button", class: "nav-btn", "aria-label": label, disabled: step > 0 && foodDay >= today,
+      onclick: () => { foodDay = addDays(foodDay, step); buildDay(); paintFood(); } }, step < 0 ? "‹" : "›");
+    v.title = h("h2", null, foodDay === today ? "Today" : day(foodDay));
+    v.sub = h("span", { class: "sub" });
+    v.meters = h("div", { class: "meters" });
+    v.note = h("p", { class: "small muted food-note", role: "status" });
+    v.slots = {};
+    const sections = SLOTS.map(([slot, name]) => {
+      const total = h("span", { class: "slot-total" });
+      const opts = h("div", { class: "opts" });
+      const items = h("div", { class: "rows slot-items" });
+      const form = otherForm(slot, name);
+      v.slots[slot] = { total, opts, items, form };
+      return h("section", { class: "slot", "aria-label": name },
+        h("div", { class: "slot-head" }, h("h3", null, name), total), opts, items, form.el);
+    });
+    const edit = h("button", { type: "button", class: "linkbtn small", "aria-pressed": String(!!v.editing), onclick: () => {
+      v.editing = !v.editing;
+      v.dayCard.classList.toggle("editing", v.editing);
+      edit.setAttribute("aria-pressed", String(v.editing));
+      edit.textContent = v.editing ? "Done editing" : "Edit options";
+    } }, v.editing ? "Done editing" : "Edit options");
+    v.dayCard.classList.toggle("editing", !!v.editing);
+    v.dayCard.replaceChildren(
+      h("header", { class: "band" }, h("div", { class: "band-text" }, h("span", { class: "kicker" }, "Food"), v.title, v.sub),
+        h("div", { class: "nav-pair" }, nav(-1, "Previous day"), nav(1, "Next day"))),
+      v.meters, ...sections,
+      h("div", { class: "row-gap food-foot" }, edit, v.note));
+  }
+  // "Other…" under each meal: log a one-off food, or keep it as an option for that meal. Misc shows it open.
+  function otherForm(slot, slotName) {
+    const misc = slot === "misc";
+    const name = h("input", { type: "text", maxlength: "80", required: true, placeholder: misc ? "What did you eat?" : "Food", "aria-label": `${slotName}: food name`, autocomplete: "off" });
+    const kcal = h("input", { type: "number", inputmode: "numeric", min: "0", max: "5000", step: "1", required: true, placeholder: "kcal", "aria-label": `${slotName}: calories` });
+    const protein = h("input", { type: "number", inputmode: "decimal", min: "0", max: "400", step: "0.5", placeholder: "Protein g", "aria-label": `${slotName}: protein in grams (optional)` });
+    const keep = h("input", { type: "checkbox", id: `keep-${slot}` });
+    const err = h("span", { class: "err small", role: "alert" });
+    const form = h("form", { class: "other", hidden: !misc },
+      h("div", { class: "other-fields" }, name, kcal, protein),
+      h("div", { class: "row-gap" },
+        h("label", { class: "check small", for: `keep-${slot}` }, keep, misc ? " Keep as a misc option" : ` Add to ${slotName.toLowerCase()} options`),
+        h("button", { type: "submit", class: "btn sm" }, "Add"), err));
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      const item = { name: name.value.trim(), kcal: kcal.valueAsNumber, protein: protein.value === "" ? 0 : protein.valueAsNumber };
+      if (!item.name || !Number.isFinite(item.kcal) || item.kcal < 0 || !Number.isFinite(item.protein) || item.protein < 0) {
+        err.textContent = "Give it a name and its calories.";
+        return;
+      }
+      err.textContent = "";
+      if (keep.checked) item.id = saveOption(slot, item);
+      logItem(foodDay, slot, item);
+      form.reset();
+      if (!misc) toggle(false);
+    });
+    const opener = misc ? null : h("button", { type: "button", class: "opt other-btn", "aria-expanded": "false", onclick: () => toggle(form.hidden) }, "Other…");
+    function toggle(open) {
+      form.hidden = !open;
+      if (opener) opener.setAttribute("aria-expanded", String(open));
+      if (open) name.focus();
+    }
+    return { el: form, opener };
+  }
+  function paintDay() {
+    const v = foodView, xs = entriesOn(foodDay), t = (DATA.food && DATA.food.targets) || {};
+    v.sub.textContent = xs.length ? `${xs.length} item${xs.length === 1 ? "" : "s"} logged` : "Nothing logged yet";
+    v.meters.replaceChildren(meter("Calories", sum(xs, "kcal"), t.kcal, " kcal"), meter("Protein", sum(xs, "protein"), t.protein, " g"));
+    for (const [slot, name] of SLOTS) {
+      const s = v.slots[slot], mine = xs.filter(e => e.slot === slot);
+      s.total.textContent = mine.length ? macro({ kcal: sum(mine, "kcal"), protein: sum(mine, "protein") }) : "";
+      fill(s.opts, mealOptions(slot).map(m => h("span", { class: "opt-wrap" },
+        h("button", { type: "button", class: "opt", onclick: () => logItem(foodDay, slot, m), "aria-label": `Add ${m.name} to ${name}, ${macro(m)}` },
+          h("span", { class: "opt-plus", "aria-hidden": "true" }, "+"), h("span", { class: "opt-name" }, m.name), h("span", { class: "opt-macro" }, macro(m))),
+        h("button", { type: "button", class: "opt-x", title: `Remove ${m.name} from ${name} options`, "aria-label": `Remove ${m.name} from ${name} options`,
+          onclick: () => { removeOption(m); v.note.replaceChildren(`Removed ${m.name} from the ${name.toLowerCase()} options.`); } }, "×"))),
+        s.form.opener);
+      fill(s.items, mine.map(e => h("div", { class: "row" },
+        h("div", null, h("span", { class: "row-title" }, e.name), h("div", { class: "small muted" }, [e.time, macro(e)].filter(Boolean).join(" · "))),
+        h("button", { type: "button", class: "linkbtn small", "aria-label": `Remove ${e.name}`, onclick: () => {
+          setEntry(e.id, true);
+          v.note.replaceChildren(`Removed ${e.name}. `, h("button", { type: "button", class: "linkbtn", onclick: () => { setEntry(e.id, false); v.note.replaceChildren(); } }, "Undo"));
+        } }, "Remove"))));
+    }
+  }
+  function paintWeek() {
+    const v = foodView, today = localToday();
+    const start = addDays(mondayOf(today), -7 * foodWeekOffset), end = addDays(start, 6);
+    const dates = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+    const rows = dates.map(d => { const xs = entriesOn(d); return { d, xs, kcal: sum(xs, "kcal"), protein: sum(xs, "protein") }; });
+    const logged = rows.filter(r => r.xs.length);
+    const avg = k => logged.length ? sum(logged, k) / logged.length : null;
+    const t = (DATA.food && DATA.food.targets) || {};
+    const top = Math.max(1, ...rows.map(r => r.kcal), t.kcal ? t.kcal[1] * 1.15 : 0);
+    const nav = (step, label) => h("button", { type: "button", class: "nav-btn", "aria-label": label, disabled: step < 0 && foodWeekOffset === 0,
+      onclick: () => { foodWeekOffset += step; paintWeek(); } }, step > 0 ? "‹" : "›");
+    const eaten = {};
+    for (const r of logged) for (const e of r.xs) {
+      const k = e.name.toLowerCase();
+      eaten[k] = eaten[k] || { name: e.name, n: 0, kcal: 0, protein: 0 };
+      eaten[k].n++; eaten[k].kcal += +e.kcal || 0; eaten[k].protein += +e.protein || 0;
+    }
+    const items = Object.values(eaten).sort((a, b) => b.kcal - a.kcal);
+    const avgK = avg("kcal");
+    fill(v.weekCard,
+      band("Food this week", `${C.fmtDay(start)} – ${C.fmtDay(end)}`,
+        avgK == null ? "Nothing logged this week" : `Average ${kc(avgK)} kcal a day over ${logged.length} logged day${logged.length === 1 ? "" : "s"}`,
+        h("div", { class: "nav-pair" }, nav(1, "Earlier week"), nav(-1, "Later week"))),
+      logged.length ? h("div", { class: "tiles" },
+        tile("Average calories", `${kc(avgK)}`, t.kcal ? `kcal a day · target ${kc(t.kcal[0])}–${kc(t.kcal[1])}` : "kcal a day"),
+        tile("Average protein", `${kc(avg("protein"))} g`, t.protein ? `a day · target ${kc(t.protein[0])}–${kc(t.protein[1])} g` : "a day"),
+        tile("Days logged", `${logged.length} of ${dates.filter(d => d <= today).length}`, "averages count only these days")) : null,
+      h("div", { class: "fw" },
+        h("span", null), h("span", { class: "wd-h" }, "Calories"), h("span", { class: "wd-h num" }, "kcal"), h("span", { class: "wd-h num" }, "Protein"),
+        rows.map(r => [
+          h("span", { class: "wd-day" + (r.d === today ? " hl" : "") }, WEEKDAYS[(C.parseDay(r.d).getDay() + 6) % 7]),
+          h("div", { class: "fw-track", "aria-hidden": "true" },
+            t.kcal ? h("span", { class: "meter-band", style: `left:${(t.kcal[0] / top) * 100}%;width:${((t.kcal[1] - t.kcal[0]) / top) * 100}%` }) : null,
+            r.kcal ? h("span", { class: "meter-fill", style: `width:${(r.kcal / top) * 100}%` }) : null),
+          h("span", { class: "num" }, r.xs.length ? kc(r.kcal) : (r.d > today ? "" : "–")),
+          h("span", { class: "num muted" }, r.xs.length ? `${kc(r.protein)} g` : "")])),
+      t.kcal ? h("div", { class: "legend" }, h("span", null, h("i", { class: "box", style: "background:var(--accent);opacity:.25" }), `Target ${kc(t.kcal[0])}–${kc(t.kcal[1])} kcal`)) : null,
+      items.length ? [sect("What you ate"), h("div", { class: "rows" }, items.map(x => h("div", { class: "row" },
+        h("div", null, h("span", { class: "row-title" }, x.name), h("span", { class: "muted small" }, ` × ${x.n}`)),
+        h("span", { class: "num small" }, macro(x)))))] : null);
+  }
+  function syncLine() {
+    const s = food.sync;
+    if (!canSync()) return "Demo: what you log stays in this browser.";
+    if (!s) return "Not syncing: what you log stays on this device.";
+    const ago = food.syncedAt ? ` · last synced ${new Date(food.syncedAt).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "";
+    return { syncing: "Syncing…", synced: "Synced with GitHub" + ago, pending: "Saved on this device, syncing shortly" + ago,
+      offline: "Offline: saved on this device, it syncs when you're back online" + ago, error: food.error, local: "" }[food.state] || "";
+  }
+  function paintSync() {
+    if (!foodShown() || !foodView.status) return;
+    foodView.status.textContent = syncLine();
+    foodView.status.className = "sync-status small " + (food.state === "error" ? "err" : "muted");
+  }
+  function buildSync() {
+    const v = foodView, s = food.sync, cfg = (DATA.food && DATA.food.store) || {};
+    v.status = h("p", { class: "sync-status small muted", role: "status" });
+    if (!canSync()) {
+      v.syncCard.replaceChildren(band("Sync", "Demo mode"), v.status);
+      return;
+    }
+    if (s) {
+      v.syncCard.replaceChildren(band("Sync", "Saved to GitHub", `${s.repo} · ${s.branch} · ${s.path}`), v.status,
+        h("div", { class: "row-gap" },
+          h("button", { type: "button", class: "btn sm", onclick: () => foodSync() }, "Sync now"),
+          h("button", { type: "button", class: "linkbtn small", onclick: () => showSetup(s) }, "Change token"),
+          h("button", { type: "button", class: "linkbtn small", onclick: forgetSync }, "Stop syncing on this device")),
+        h("p", { class: "small muted" }, "The log is encrypted with your dashboard passphrase before it leaves this device; GitHub only stores the scrambled file."));
+      return;
+    }
+    showSetup({ repo: cfg.repo || "", branch: cfg.branch || "food-log", path: cfg.path || "food.enc.json" });
+  }
+  function showSetup(defaults) {
+    const v = foodView;
+    const token = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "github_pat_…", "aria-label": "GitHub token" });
+    const repo = h("input", { type: "text", value: defaults.repo, "aria-label": "Repository (owner/name)", spellcheck: "false" });
+    const branch = h("input", { type: "text", value: defaults.branch, "aria-label": "Branch", spellcheck: "false" });
+    const path = h("input", { type: "text", value: defaults.path, "aria-label": "File", spellcheck: "false" });
+    const err = h("p", { class: "err small", role: "alert" });
+    const btn = h("button", { type: "submit", class: "btn sm" }, "Save and sync");
+    const form = h("form", { class: "setup" },
+      h("ol", { class: "steps note" },
+        h("li", null, "Open ", h("a", { href: "https://github.com/settings/personal-access-tokens/new", target: "_blank", rel: "noopener" }, "a new fine-grained token"), " on GitHub."),
+        h("li", null, "Repository access: ", h("strong", null, "Only select repositories"), ", pick ", h("strong", null, defaults.repo || "the repo below"), "."),
+        h("li", null, "Repository permissions: ", h("strong", null, "Contents: Read and write"), ". Nothing else."),
+        h("li", null, "Generate it, then paste it here. Do this once on each device you log from.")),
+      h("label", { class: "field" }, h("span", { class: "tile-label" }, "Token"), token),
+      h("details", { class: "where" }, h("summary", { class: "small" }, "Where the log is saved"),
+        h("div", { class: "where-fields" },
+          h("label", { class: "field" }, h("span", { class: "tile-label" }, "Repository"), repo),
+          h("label", { class: "field" }, h("span", { class: "tile-label" }, "Branch"), branch),
+          h("label", { class: "field" }, h("span", { class: "tile-label" }, "File"), path))),
+      h("div", { class: "row-gap" }, btn, food.sync ? h("button", { type: "button", class: "linkbtn small", onclick: () => { buildSync(); paintSync(); } }, "Cancel") : null),
+      err,
+      h("p", { class: "small muted" }, "The token is kept on this device, encrypted with your passphrase. Anyone holding it could change that repository, so give it access to that one repo only."));
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const s = { token: token.value.trim(), repo: repo.value.trim().replace(/^https:\/\/github\.com\//, "").replace(/\/$/, ""),
+        branch: branch.value.trim() || "food-log", path: path.value.trim() || "food.enc.json" };
+      if (!s.token || !/^[\w.-]+\/[\w.-]+$/.test(s.repo)) { err.textContent = "Paste the token, and give the repository as owner/name."; return; }
+      btn.disabled = true; err.textContent = "";
+      const before = food.sync;
+      await saveSyncSettings(s);
+      btn.disabled = false;
+      if (food.state === "error") {
+        err.textContent = food.error;
+        food.sync = before;
+        if (before) store.set(FOOD_SYNC_KEY, await sealed(before)); else store.del(FOOD_SYNC_KEY);
+        food.state = before ? "pending" : "local";
+        return;
+      }
+      buildSync(); paintSync();
+    });
+    v.syncCard.replaceChildren(band("Sync", "Save your log to GitHub", "So every device you log from sees the same meals"), v.status, form);
   }
 
   // ---------- Tournaments ----------
