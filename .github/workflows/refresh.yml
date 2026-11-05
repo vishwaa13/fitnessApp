@@ -75,6 +75,11 @@ jobs:
           path: .cache
           key: state-${{ github.run_id }}
 
+      # Each deploy gets its own file names (app.js?v=...), and version.json tells an open
+      # page a newer one is out, so a browser never mixes or keeps old files after a deploy.
+      - name: Stamp the site version
+        run: python -m fitapp.stamp site "${GITHUB_SHA::12}"
+
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

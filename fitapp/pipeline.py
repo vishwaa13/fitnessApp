@@ -351,6 +351,9 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
         # The repo's Actions logs are public: counts only, no health details.
         log.info("Gym log: %d sessions, %d unreadable lines", ov_out["sessions_logged"],
                  sum(len(u["lines"]) for u in ov_out["unparsed"]))
+        last = ov_out.get("last_time") or []
+        log.info("Last time card: %d lifts, %d main, %d compound", len(last), sum(1 for x in last if x["main"]),
+                 sum(1 for x in last if x["compound"]))
 
     # --- Act: calendar swaps ------------------------------------------------
     mode = cfg["readiness"]["mode"]

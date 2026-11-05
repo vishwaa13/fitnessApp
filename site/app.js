@@ -60,8 +60,21 @@
       return r.ok ? await r.json() : null;
     } catch (e) { return null; }
   }
+  // After a deploy the browser may still have the old page for up to 10 minutes: if version.json
+  // (fetched uncached) names a newer version, reload once at an address it hasn't cached.
+  async function fresh() {
+    const meta = document.querySelector('meta[name="site-version"]');
+    if (!meta) return true;                                    // running locally, not deployed
+    const v = await fetchJson("version.json?t=" + Date.now());
+    if (!v || !v.version || v.version === meta.content) return true;
+    const tried = "morningcheck.reloaded." + v.version;
+    try { if (sessionStorage.getItem(tried)) return true; sessionStorage.setItem(tried, "1"); } catch (e) { return true; }
+    location.replace(location.pathname + "?v=" + encodeURIComponent(v.version) + location.hash);
+    return false;
+  }
   async function boot() {
     if (window.__MORNING_CHECK_DATA__) return start(window.__MORNING_CHECK_DATA__);
+    if (!(await fresh())) return;
     const forceDemo = location.hash === "#demo";
     const env = forceDemo ? null : await fetchJson("data/data.enc.json");
     if (env && env.ct) {
@@ -339,8 +352,8 @@
       input.addEventListener("input", () => {
         const q = input.value.trim();
         if (!q) return show([], "");
-        const hits = window.LiftSearch.rank(others, q);
-        const above = hits.length ? [] : window.LiftSearch.rank(main, q);
+        const hits = rankLifts(others, q);
+        const above = hits.length ? [] : rankLifts(main, q);
         show(hits, hits.length ? `${hits.length} match${hits.length === 1 ? "" : "es"}, best first`
           : above.length ? `${above[0].name} is in the list above.` : `No lift matches “${q}”.`);
       });
@@ -353,6 +366,9 @@
     card.append(h("p", { class: "small muted" }, "From your gym log in Keep · ", go("strength")));
     return card;
   }
+  // lift-search.js ranks; if it didn't load, a plain "name contains it" search still works.
+  const rankLifts = (items, q) => (window.LiftSearch ? window.LiftSearch.rank(items, q)
+    : items.filter(x => x.name.toLowerCase().includes(q.toLowerCase())).sort((a, b) => b.date.localeCompare(a.date)));
   // ["60 kg × 8, 8, 7", "62.5 kg × 5"]: back-to-back sets at one weight share it.
   function setGroups(sets) {
     const groups = [];
