@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date, timedelta
 from typing import Any
 
@@ -185,6 +186,38 @@ def template_name(members: list[Session]) -> str:
     return " + ".join(names) if names else "Session"
 
 
+def last_time(sessions: list[Session], today: date, recent_days: int = 42) -> list[dict[str, Any]]:
+    """What you did the last time you did each lift: the date and every set, to beat today.
+
+    A pain note about the lift from that session or a later one comes along
+    ("Left shoulder pain, stopped"), since a stopped attempt leaves no sets."""
+    lifts: dict[str, dict[str, Any]] = {}
+    keys_by_name: dict[str, str] = {}
+    for s in sorted(sessions, key=lambda x: x.date):
+        for e in s.exercises:
+            sets = [{"w": st.get("w") or None, "r": int(st["r"])} for st in e.sets if (st.get("r") or 0) > 0]
+            if not sets:
+                continue
+            keys_by_name[exercise_key(e.name)] = e.key
+            lift = lifts.setdefault(e.key, {"key": e.key, "sessions": 0, "date": None})
+            if lift["date"] == s.date.isoformat():
+                lift["sets"] += sets            # the same lift on two lines of one session
+                continue
+            lift.update(name=e.name, date=s.date.isoformat(), sets=sets, sessions=lift["sessions"] + 1)
+    notes: dict[str, dict] = {}
+    for s in sessions:
+        for n in s.notes:
+            # "Bench 62.5 X Left shoulder pain, stopped" names its lift; a bare "Left shoulder
+            # pain" line belongs to the lift above it.
+            named = re.split(r"\d", n.get("text") or "", maxsplit=1)[0].strip(" :-")
+            key = keys_by_name.get(exercise_key(named)) or keys_by_name.get(exercise_key(n.get("exercise") or ""))
+            if key in lifts and s.date.isoformat() >= lifts[key]["date"]:
+                if key not in notes or s.date.isoformat() >= notes[key]["date"]:
+                    notes[key] = {"date": s.date.isoformat(), "text": n["text"], "stopped": bool(n.get("stopped"))}
+    return sorted(({**lift, "note": notes.get(key), "recent": (today - d(lift["date"])).days <= recent_days}
+                   for key, lift in lifts.items()), key=lambda x: x["name"].lower())
+
+
 def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict] | None = None,
                break_days: int | None = None) -> dict[str, Any]:
     """Next-session targets for every recently used workout template."""
@@ -257,6 +290,7 @@ def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict]
     stalls = [l["name"] for l in lifts.values()
               if len(l["history"]) >= 4 and score(l["history"][-1]) <= max(score(h) for h in l["history"][-4:-1])]
     return {"templates": templates, "lifts": sorted(lifts.values(), key=lambda l: l["name"].lower()),
+            "last_time": last_time(sessions, today),
             "stalled": stalls, "sessions_logged": len(sessions),
             "last_session": sessions[-1].date.isoformat() if sessions else None}
 

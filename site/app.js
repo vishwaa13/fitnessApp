@@ -214,7 +214,7 @@
 
     panel.append(h("div", { class: "grid2" },
       h("div", { class: "stack" }, calendarCard(t), stripCard()),
-      h("div", { class: "stack" }, reviewOnToday(d), injurySummary(d.injury), strengthSummary(d.overload), latestTournament(d.tournaments))));
+      h("div", { class: "stack" }, reviewOnToday(d), injurySummary(d.injury), lastTimeCard(d.overload), latestTournament(d.tournaments))));
 
     function stripCard() {
       return h("section", { class: "card" },
@@ -309,17 +309,39 @@
     return h("p", { class: "note" }, h("strong", null, "Rested 2+ weeks: "),
       back.map(b => `${b.part} (${b.days} days)`).join(", ") + ". Start 10–15% lighter when you go back; the Strength targets already do.");
   }
-  function strengthSummary(ov) {
-    const t = (ov.templates || []).find(x => x.up_next);
-    const card = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", null, "Next gym session"), t ? chip("plain accent", t.name) : null));
-    if (!t) {
-      card.append(h("p", { class: "note" }, ov.sessions_logged ? "No session in the last six weeks to build from." : "No gym log found yet. Check the Keep note title in config.yml."));
+  // What you did the last time you did each lift, so today's session can beat it.
+  function lastTimeCard(ov) {
+    const all = ov.last_time || [];
+    const card = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", null, "Last time"),
+      all.length ? h("span", { class: "small muted" }, "Beat it today") : null));
+    if (!all.length) {
+      card.append(h("p", { class: "note" }, ov.sessions_logged ? "No sets in the gym log yet." : "No gym log found yet. Check the Keep note title in config.yml."));
       return card;
     }
-    card.append(h("div", { class: "rows" }, t.exercises.slice(0, 5).map(e => h("div", { class: "row" },
-      h("span", { class: "row-title" }, e.name), h("span", { class: "num" }, targetText(e.next))))),
-      h("p", { class: "small muted" }, garminLine(t) + " · ", go("strength")));
+    const today = C.parseDay(DATA.today_date);
+    const ago = iso => { const n = Math.round((today - C.parseDay(iso)) / 864e5); return n <= 0 ? "today" : n === 1 ? "yesterday" : `${n} days ago`; };
+    const row = x => h("div", { class: "row" },
+      h("div", null, h("span", { class: "row-title" }, x.name), h("div", { class: "small muted nowrap" }, `${day(x.date)} · ${ago(x.date)}`)),
+      h("span", { class: "last-sets num" }, setGroups(x.sets).map(g => h("span", { class: "set-group" }, g))),
+      x.note ? h("p", { class: "row-sub pain-note" }, `${C.fmtDay(x.note.date)}: ${x.note.text}`) : null);
+    const recent = all.filter(x => x.recent), older = all.filter(x => !x.recent);
+    card.append(h("div", { class: "rows" }, (recent.length ? recent : older).map(row)));
+    if (recent.length && older.length) {
+      card.append(h("details", { class: "older" },
+        h("summary", { class: "small" }, `${older.length} lift${older.length === 1 ? "" : "s"} not done in the last 6 weeks`),
+        h("div", { class: "rows" }, older.map(row))));
+    }
+    card.append(h("p", { class: "small muted" }, "From your gym log in Keep · ", go("strength")));
     return card;
+  }
+  // ["60 kg × 8, 8, 7", "62.5 kg × 5"]: back-to-back sets at one weight share it.
+  function setGroups(sets) {
+    const groups = [];
+    for (const st of sets) {
+      const g = groups[groups.length - 1];
+      if (g && g.w === st.w) g.r.push(st.r); else groups.push({ w: st.w, r: [st.r] });
+    }
+    return groups.map(g => `${g.w ? (g.w % 1 ? g.w : g.w.toFixed(0)) + " kg" : "Bodyweight"} × ${g.r.join(", ")}`);
   }
   function latestTournament(ts) {
     if (!ts || !ts.length) return null;

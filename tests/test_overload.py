@@ -127,3 +127,21 @@ def test_pain_backs_off_the_lifts_that_load_that_body_part():
 def test_activity_description_carries_pain_notes():
     s = parse_gym_log("29/09\nSquat 3x5 100\nRight knee ache", today=date(2026, 10, 1))[0]
     assert "Note: Right knee ache" in activity_description(s)
+
+
+def test_last_time_shows_each_lifts_latest_session():
+    from fitapp.overload import last_time
+    log = ("1/9 Upper\nBench press 55 X 8, 8, 8\nPull-ups 10, 9, 8\nLeg curl 30 X 12\n\n"
+           "20/10 Upper\nBench 60 X 8, 8, 7\nBench 62.5 X 5\nPull-ups 10, 10, 8\n\n"
+           "23/10 Upper\nPull-ups 9, 9, 9\nBench 62.5 X Left shoulder pain, stopped\n")
+    sessions = parse_gym_log(log, date(2026, 11, 5), "DMY", "kg", "weight_x_reps", {"Bench": ["Bench press"]})
+    last = {x["name"]: x for x in last_time(sessions, date(2026, 11, 5))}
+    assert list(last) == ["Bench", "Leg curl", "Pull-ups"]
+    bench = last["Bench"]
+    assert bench["date"] == "2026-10-20" and bench["sessions"] == 2              # alias: one lift
+    assert bench["sets"] == [{"w": 60, "r": 8}, {"w": 60, "r": 8}, {"w": 60, "r": 7}, {"w": 62.5, "r": 5}]
+    assert bench["note"] == {"date": "2026-10-23", "text": "Bench 62.5 X Left shoulder pain, stopped", "stopped": True}
+    # The pain line comes after pull-ups but names the bench, so pull-ups get no note.
+    assert last["Pull-ups"]["sets"] == [{"w": None, "r": 9}] * 3 and last["Pull-ups"]["date"] == "2026-10-23"
+    assert last["Pull-ups"]["note"] is None and last["Pull-ups"]["recent"]
+    assert last["Leg curl"]["date"] == "2026-09-01" and not last["Leg curl"]["recent"]   # over 6 weeks ago

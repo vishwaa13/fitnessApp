@@ -265,6 +265,11 @@ label.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--fo
 .row:first-child { border-top: 0; padding-top: 2px; }
 .row-title { font-weight: 600; }
 .row-sub { font-size: 0.85rem; color: var(--ink-2); grid-column: 1 / -1; }
+.last-sets { text-align: right; font-weight: 600; max-width: 62vw; }
+.set-group { display: block; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.pain-note { color: var(--warn-ink); }
+details.older > summary { cursor: pointer; color: var(--accent-ink); padding-block: 6px; }
 .strike { text-decoration: line-through; color: var(--muted); font-weight: 500; }
 .arrow { color: var(--muted); padding-inline: 4px; }
 
