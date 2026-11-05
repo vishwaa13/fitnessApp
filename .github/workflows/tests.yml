@@ -23,6 +23,6 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
       - name: Site scripts parse
-        run: node --check site/app.js && node --check site/charts.js
-      - name: Food sheet Apps Script
-        run: node tests/js/food-sheet.test.js
+        run: for f in site/*.js; do node --check "$f" || exit 1; done
+      - name: JavaScript tests (food sheet Apps Script, lift search)
+        run: for f in tests/js/*.test.js; do node "$f" || exit 1; done

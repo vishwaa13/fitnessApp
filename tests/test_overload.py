@@ -145,3 +145,26 @@ def test_last_time_shows_each_lifts_latest_session():
     assert last["Pull-ups"]["sets"] == [{"w": None, "r": 9}] * 3 and last["Pull-ups"]["date"] == "2026-10-23"
     assert last["Pull-ups"]["note"] is None and last["Pull-ups"]["recent"]
     assert last["Leg curl"]["date"] == "2026-09-01" and not last["Leg curl"]["recent"]   # over 6 weeks ago
+
+
+def test_main_lifts_are_frequent_compound_ones_or_your_own_pick():
+    from fitapp.overload import is_compound, last_time
+    today = date(2026, 11, 5)
+    lines = []
+    for k, dd in enumerate(["15/10", "20/10", "25/10", "30/10", "3/11"]):
+        lines.append(f"{dd} Gym")
+        lines += ["Squat 100 X 5", "Bicep curl 12 X 10", "Leg curl 30 X 12"]           # done 5 times
+        if k < 4:
+            lines += ["Bench 60 X 8", "OHP 40 X 8"]                                    # 4 times
+        if k < 2:
+            lines.append("Pull-ups 0 X 8")                                             # twice: not often enough
+        lines.append("")
+    lines += ["1/7 Old", "Deadlift 140 X 3", ""]                                       # compound, but months ago
+    sessions = parse_gym_log("\n".join(lines), today, "DMY", "kg", "weight_x_reps")
+    main = sorted((x for x in last_time(sessions, today) if x["main"]), key=lambda x: x["main"])
+    # Compound and 3+ sessions in 8 weeks; most done first, then most recent, then name.
+    assert [x["name"] for x in main] == ["Squat", "Bench", "OHP"]
+    assert [x["name"] for x in last_time(sessions, today, main_count=2) if x["main"]] == ["Bench", "Squat"]   # capped
+    pinned = last_time(sessions, today, pinned=["Leg curl", "deadlifts", "Not a lift"])
+    assert sorted((x["main"], x["name"]) for x in pinned if x["main"]) == [(1, "Leg curl"), (2, "Deadlift")]
+    assert is_compound("OHP") and is_compound("Incline dumbbell bench press") and not is_compound("Leg curl")

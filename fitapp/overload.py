@@ -186,24 +186,46 @@ def template_name(members: list[Session]) -> str:
     return " + ".join(names) if names else "Session"
 
 
-def last_time(sessions: list[Session], today: date, recent_days: int = 42) -> list[dict[str, Any]]:
+# Multi-joint lifts, unless the name says it's an isolation move ("leg curl", "triceps extension").
+_COMPOUND = re.compile(r"squat|deadlift|\b(?:rdl|sldl|ohp|dl|bp)\b|romanian|good ?morning|bench|press|pull ?-?ups?\b|chin ?-?ups?\b|\brows?\b"
+                       r"|\bdips?\b|lunge|step ?-?ups?\b|hip ?thrust|glute ?bridge|\bclean|snatch|jerk|thruster|push ?-?ups?\b"
+                       r"|muscle ?-?ups?\b|swing|carry", re.I)
+_ISOLATION = re.compile(r"curl|extension|raise|\bfl(?:y|ies|yes)\b|push ?-?down|kick ?-?back|calf|calves|crunch|plank|shrug"
+                        r"|face ?pull|pull ?-?over|adduct|abduct|wrist|sit ?-?up|nordic|\babs?\b|\bcore\b", re.I)
+
+
+def is_compound(name: str) -> bool:
+    return bool(_COMPOUND.search(name)) and not _ISOLATION.search(name)
+
+
+def last_time(sessions: list[Session], today: date, recent_days: int = 42, pinned: list[str] | None = None,
+              main_count: int = 6, main_window: int = 56, main_min: int = 3) -> list[dict[str, Any]]:
     """What you did the last time you did each lift: the date and every set, to beat today.
 
     A pain note about the lift from that session or a later one comes along
-    ("Left shoulder pain, stopped"), since a stopped attempt leaves no sets."""
+    ("Left shoulder pain, stopped"), since a stopped attempt leaves no sets.
+    Your main lifts get a ``main`` rank (1 first): the ones listed in ``pinned``
+    in that order, or else the compound lifts you did in at least ``main_min``
+    sessions of the last ``main_window`` days, most often done first, up to
+    ``main_count`` of them. The site lists those and makes the rest searchable."""
     lifts: dict[str, dict[str, Any]] = {}
     keys_by_name: dict[str, str] = {}
+    since = (today - timedelta(days=main_window)).isoformat()
     for s in sorted(sessions, key=lambda x: x.date):
         for e in s.exercises:
             sets = [{"w": st.get("w") or None, "r": int(st["r"])} for st in e.sets if (st.get("r") or 0) > 0]
             if not sets:
                 continue
             keys_by_name[exercise_key(e.name)] = e.key
-            lift = lifts.setdefault(e.key, {"key": e.key, "sessions": 0, "date": None})
+            lift = lifts.setdefault(e.key, {"key": e.key, "sessions": 0, "lately": 0, "date": None, "names": []})
+            if e.name not in lift["names"]:
+                lift["names"].append(e.name)
             if lift["date"] == s.date.isoformat():
                 lift["sets"] += sets            # the same lift on two lines of one session
                 continue
             lift.update(name=e.name, date=s.date.isoformat(), sets=sets, sessions=lift["sessions"] + 1)
+            if lift["date"] >= since:
+                lift["lately"] += 1
     notes: dict[str, dict] = {}
     for s in sessions:
         for n in s.notes:
@@ -214,6 +236,19 @@ def last_time(sessions: list[Session], today: date, recent_days: int = 42) -> li
             if key in lifts and s.date.isoformat() >= lifts[key]["date"]:
                 if key not in notes or s.date.isoformat() >= notes[key]["date"]:
                     notes[key] = {"date": s.date.isoformat(), "text": n["text"], "stopped": bool(n.get("stopped"))}
+    for lift in lifts.values():
+        lift["compound"] = is_compound(lift["name"])
+        lift["main"] = None
+    if pinned:
+        keys = [keys_by_name.get(exercise_key(n)) or exercise_key(n) for n in pinned]
+        main = [lifts[k] for k in dict.fromkeys(keys) if k in lifts]
+    else:
+        # Most sessions lately first, then the one done most recently, then by name.
+        main = sorted((x for x in lifts.values() if x["compound"] and x["lately"] >= main_min), key=lambda x: x["name"].lower())
+        main.sort(key=lambda x: x["date"], reverse=True)
+        main = sorted(main, key=lambda x: -x["lately"])[:main_count]
+    for rank, lift in enumerate(main, 1):
+        lift["main"] = rank
     return sorted(({**lift, "note": notes.get(key), "recent": (today - d(lift["date"])).days <= recent_days}
                    for key, lift in lifts.items()), key=lambda x: x["name"].lower())
 
@@ -290,7 +325,7 @@ def build_plan(sessions: list[Session], cfg: dict, today: date, pain: list[dict]
     stalls = [l["name"] for l in lifts.values()
               if len(l["history"]) >= 4 and score(l["history"][-1]) <= max(score(h) for h in l["history"][-4:-1])]
     return {"templates": templates, "lifts": sorted(lifts.values(), key=lambda l: l["name"].lower()),
-            "last_time": last_time(sessions, today),
+            "last_time": last_time(sessions, today, pinned=cfg.get("main_lifts") or None),
             "stalled": stalls, "sessions_logged": len(sessions),
             "last_session": sessions[-1].date.isoformat() if sessions else None}
 

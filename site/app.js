@@ -110,8 +110,9 @@
     render();
     window.addEventListener("hashchange", render);
     let t;
-    // Not on the Food tab: a phone's keyboard opening is a resize, and redrawing would wipe what you're typing.
-    window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => { if (currentTab() !== "food") renderTab(); }, 150); });
+    // A phone's keyboard opening is a resize, and redrawing would wipe what you're typing.
+    const typing = () => currentTab() === "food" || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+    window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => { if (!typing()) renderTab(); }, 150); });
     // Back on the page: pick up meals logged on another device.
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") foodSync(); });
   }
@@ -324,12 +325,30 @@
       h("div", null, h("span", { class: "row-title" }, x.name), h("div", { class: "small muted nowrap" }, `${day(x.date)} · ${ago(x.date)}`)),
       h("span", { class: "last-sets num" }, setGroups(x.sets).map(g => h("span", { class: "set-group" }, g))),
       x.note ? h("p", { class: "row-sub pain-note" }, `${C.fmtDay(x.note.date)}: ${x.note.text}`) : null);
-    const recent = all.filter(x => x.recent), older = all.filter(x => !x.recent);
-    card.append(h("div", { class: "rows" }, (recent.length ? recent : older).map(row)));
-    if (recent.length && older.length) {
-      card.append(h("details", { class: "older" },
-        h("summary", { class: "small" }, `${older.length} lift${older.length === 1 ? "" : "s"} not done in the last 6 weeks`),
-        h("div", { class: "rows" }, older.map(row))));
+    // Your main lifts (compound ones you do often, or main_lifts in config.yml) first; the rest by search.
+    const main = all.filter(x => x.main).sort((a, b) => a.main - b.main);
+    const others = all.filter(x => !x.main);
+    if (main.length) card.append(h("div", { class: "rows" }, main.map(row)));
+    if (others.length) {
+      const results = h("div", { class: "rows lift-results" });
+      const status = h("p", { class: "small muted lift-status", role: "status" });
+      const input = h("input", { type: "search", class: "lift-search", autocomplete: "off", spellcheck: "false", enterkeyhint: "search",
+        placeholder: `Search ${others.length} other lift${others.length === 1 ? "" : "s"}`, "aria-label": "Search your other lifts" });
+      const showAll = h("button", { type: "button", class: "linkbtn small" }, "Show all");
+      const show = (list, msg) => { results.replaceChildren(...list.map(row)); status.textContent = msg; };
+      input.addEventListener("input", () => {
+        const q = input.value.trim();
+        if (!q) return show([], "");
+        const hits = window.LiftSearch.rank(others, q);
+        const above = hits.length ? [] : window.LiftSearch.rank(main, q);
+        show(hits, hits.length ? `${hits.length} match${hits.length === 1 ? "" : "es"}, best first`
+          : above.length ? `${above[0].name} is in the list above.` : `No lift matches “${q}”.`);
+      });
+      showAll.addEventListener("click", () => {
+        input.value = "";
+        show([...others].sort((a, b) => b.date.localeCompare(a.date)), `All ${others.length}, most recently done first`);
+      });
+      card.append(h("div", { class: "lift-find" }, input, showAll), status, results);
     }
     card.append(h("p", { class: "small muted" }, "From your gym log in Keep · ", go("strength")));
     return card;

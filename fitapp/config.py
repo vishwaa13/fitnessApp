@@ -105,6 +105,8 @@ DEFAULTS: dict[str, Any] = {
         "default_rep_range": [8, 12],
         "rules": [],
         "garmin_exercise_overrides": {},
+        # Lifts listed first on the Today tab's Last time card; empty picks them for you.
+        "main_lifts": [],
     },
     "events": {
         "keywords": ["tryout", "tryouts", "tournament", "hat", "championship"],

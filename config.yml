@@ -98,6 +98,11 @@ overload:
     Nordic curls: [Nordics]
     Split squats: [Bulgarian split squat]
     Ab crunches: [Weighted crunches, Cable crunches]
+  # The Last time card (Today tab) lists your main lifts and makes the rest searchable.
+  # Left empty, the main lifts are the compound ones you did 3+ times in the last 8
+  # weeks (up to 6, most done first). To choose them yourself, list them in order:
+  #   main_lifts: [Squat, Bench press, RDL, Pull-ups]
+  main_lifts: []
   upload_to_garmin: true
   schedule_on_calendar: true    # put "up next" on the Garmin calendar on your next gym day
   write_activity_descriptions: true

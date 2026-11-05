@@ -26,4 +26,4 @@ def test_page_only_runs_its_own_scripts_and_talks_to_the_food_sheet():
     rules = dict(r.strip().split(" ", 1) for r in csp.split(";") if r.strip())
     assert rules["script-src"] == "'self'"
     assert rules["connect-src"] == "'self' https://script.google.com https://script.googleusercontent.com"
-    assert re.findall(r"<script[^>]*>", html) == ['<script src="charts.js">', '<script src="app.js">']
+    assert re.findall(r"<script[^>]*>", html) == ['<script src="charts.js">', '<script src="lift-search.js">', '<script src="app.js">']
