@@ -145,7 +145,7 @@
     renderTab();
   }
   const SOURCE_NAMES = { garmin: "Garmin", garmin_api: "Garmin API", garmin_login: "Garmin login", keep: "Keep",
-    calendar: "Calendar", event_lookup: "Event lookup" };
+    calendar: "Calendar", event_lookup: "Event lookup", food_sheet: "Food sheet" };
   // Two Garmin connections: the official API (reads) and the login (readiness, drinks, workout uploads).
   function garminBanner(src) {
     const api = src.garmin_api, login = src.garmin_login;

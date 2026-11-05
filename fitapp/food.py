@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import requests
+
 SLOTS = ("breakfast", "lunch", "dinner", "snacks", "misc")
 
 
@@ -34,6 +36,25 @@ def _range(value: Any) -> list[float] | None:
         return sorted([lo, hi]) if lo is not None and hi is not None else None
     n = _num(value)
     return [n, n] if n is not None else None
+
+
+def check_sheet(url: str, get=requests.get) -> tuple[str, dict[str, int]]:
+    """Ask the food sheet's web app for its log: ("ok", counts), or why not.
+
+    Only counts go into the (public) run log, never the URL: it is the key to the sheet."""
+    try:
+        resp = get(url, timeout=30)
+    except requests.RequestException as exc:
+        return f"error: {type(exc).__name__}", {}
+    try:
+        body = resp.json()
+    except ValueError:
+        return "error: not JSON (deploy the script as a Web app with Who has access: Anyone)", {}
+    if not isinstance(body, dict) or not body.get("ok"):
+        why = body.get("error") if isinstance(body, dict) else None
+        return "error: " + str(why or f"HTTP {getattr(resp, 'status_code', '?')}")[:80], {}
+    live = lambda tab: sum(1 for x in (body.get(tab) or {}).values() if isinstance(x, dict) and not x.get("deleted"))  # noqa: E731
+    return "ok", {"entries": live("entries"), "options": live("meals")}
 
 
 def settings(cfg: dict, url: str | None = None) -> dict[str, Any]:

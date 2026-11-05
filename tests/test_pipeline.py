@@ -143,6 +143,22 @@ def test_run_publishes_encrypted_data_and_acts_once_per_day(tmp_path, fakes):
     assert g2.uploaded == [] and g2.scheduled == [] and g2.descriptions == {}
 
 
+def test_food_sheet_is_checked_but_its_url_stays_out_of_logs_and_sources(tmp_path, fakes, monkeypatch, caplog):
+    from fitapp import food
+    url = "https://script.google.com/macros/s/AKfy-secret-key/exec"
+    monkeypatch.setenv("FOOD_SHEET_URL", url)
+    asked = []
+    monkeypatch.setattr(food, "check_sheet", lambda u: (asked.append(u), ("ok", {"entries": 3, "options": 1}))[1])
+    with caplog.at_level("INFO"):
+        data = pipeline.run(load_config(), tmp_path / "site", tmp_path / "c.json", now=NOW)
+    assert asked == [url] and data["sources"]["food_sheet"] == "ok"
+    assert "Food sheet: ok, 3 entries, 1 added options" in caplog.text and "AKfy" not in caplog.text
+    assert data["food"]["store"]["url"] == url                  # only inside the encrypted data
+    monkeypatch.setenv("FOOD_SHEET_URL", "https://docs.google.com/spreadsheets/d/x/edit")   # pasted the sheet, not the web app
+    data = pipeline.run(load_config(), tmp_path / "site2", tmp_path / "c2.json", now=NOW)
+    assert "isn't an Apps Script web app URL" in data["sources"]["food_sheet"] and len(asked) == 1
+
+
 def test_suggest_mode_and_dry_run_leave_calendar_alone(tmp_path, fakes):
     cfg = load_config()
     cfg["readiness"]["mode"] = "suggest"

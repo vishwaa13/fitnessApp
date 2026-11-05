@@ -298,6 +298,17 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     else:
         sources["calendar"] = "not configured"
 
+    # --- Food sheet: just check it answers; the site reads and writes it --------
+    food_url = os.getenv("FOOD_SHEET_URL", "").strip()
+    if food_url:
+        if food.settings(cfg, food_url)["store"]["url"]:
+            sources["food_sheet"], counts = food.check_sheet(food_url)
+            log.info("Food sheet: %s%s", sources["food_sheet"],
+                     f", {counts['entries']} entries, {counts['options']} added options" if counts else "")
+        else:
+            sources["food_sheet"] = "error: FOOD_SHEET_URL isn't an Apps Script web app URL (script.google.com/macros/s/.../exec)"
+            log.error("Food sheet: %s", sources["food_sheet"])
+
     # --- Upcoming events and flights, located with Gemini (or Claude) + web search -
     from .events import attach_flights, enrich, flights, select
     from .sources.event_lookup import EventLookup
@@ -331,7 +342,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
                    upcoming_events=upcoming, soreness=soreness, drinks=note_drinks,
-                   food_url=os.getenv("FOOD_SHEET_URL"))
+                   food_url=food_url)
     data["travel"] = other_flights
     if garmin is not None and garmin.lifestyle_sample:
         data["garmin_lifestyle_sample"] = garmin.lifestyle_sample

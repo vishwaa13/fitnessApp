@@ -134,11 +134,17 @@ food:
   targets:
     kcal: [2850, 3100]
     protein: [200, 220]
+  # Changing kcal or protein here changes the option, not what you already logged.
   meals:
     - {name: "Granola (150 g) + milk", kcal: 750, protein: 40, slots: [breakfast]}
-    - {name: "Potato meal (chicken thigh)", kcal: 1040, protein: 58, slots: [lunch, dinner]}
-    - {name: "Potato meal (chicken breast)", kcal: 935, protein: 67, slots: [lunch, dinner]}
+    # 250 g potatoes (raw weight, ~77 kcal and 1.9 g protein per 100 g) plus the chicken.
+    - {name: "Potato meal (chicken thigh)", kcal: 980, protein: 56, slots: [lunch, dinner]}
+    - {name: "Potato meal (chicken breast)", kcal: 875, protein: 65, slots: [lunch, dinner]}
     - {name: "Skyr bowl (skyr + whey)", kcal: 245, protein: 44, slots: [snacks]}
+    # 120-160 kcal for most brands; richer ones like Cocio are ~155.
+    - {name: "Kakaomælk (200 ml)", kcal: 140, protein: 7, slots: [snacks]}
+    # A mug: 250 ml letmælk + ~20 g cocoa drink powder. With whole milk it's ~235 kcal.
+    - {name: "Hot chocolate (250 ml)", kcal: 190, protein: 9, slots: [snacks]}
   # The log itself is saved to a Google Sheet: README → Food log.
 
 # ---------------------------------------------------------------------------
