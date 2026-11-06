@@ -148,12 +148,19 @@ def test_food_sheet_is_checked_but_its_url_stays_out_of_logs_and_sources(tmp_pat
     url = "https://script.google.com/macros/s/AKfy-secret-key/exec"
     monkeypatch.setenv("FOOD_SHEET_URL", url)
     asked = []
-    monkeypatch.setattr(food, "check_sheet", lambda u: (asked.append(u), ("ok", {"entries": 3, "options": 1}))[1])
+    sheet = {"ok": True, "meals": {}, "entries": {
+        "b1": {"date": TODAY.isoformat(), "slot": "alcohol", "name": "Beer (33 cl)", "kcal": 140},
+        "b2": {"date": TODAY.isoformat(), "slot": "alcohol", "name": "Beer (33 cl)", "kcal": 140},
+        "w1": {"date": TODAY.isoformat(), "slot": "alcohol", "name": "Wine (15 cl glass)", "kcal": 125}}}
+    monkeypatch.setattr(food, "check_sheet", lambda u: (asked.append(u), ("ok", {"entries": 3, "options": 1}, sheet))[1])
     with caplog.at_level("INFO"):
         data = pipeline.run(load_config(), tmp_path / "site", tmp_path / "c.json", now=NOW)
     assert asked == [url] and data["sources"]["food_sheet"] == "ok"
     assert "Food sheet: ok, 3 entries, 1 added options" in caplog.text and "AKfy" not in caplog.text
     assert data["food"]["store"]["url"] == url                  # only inside the encrypted data
+    # Drinks logged on the Food tab count as that evening's alcohol, but never reach the public log.
+    assert data["alcohol"]["evenings"][TODAY.isoformat()] == {"types": {"beer": 2, "wine": 1}, "total": 3, "source": "food log"}
+    assert "beer" not in caplog.text.lower() and "wine" not in caplog.text.lower()
     monkeypatch.setenv("FOOD_SHEET_URL", "https://docs.google.com/spreadsheets/d/x/edit")   # pasted the sheet, not the web app
     data = pipeline.run(load_config(), tmp_path / "site2", tmp_path / "c2.json", now=NOW)
     assert "isn't an Apps Script web app URL" in data["sources"]["food_sheet"] and len(asked) == 1

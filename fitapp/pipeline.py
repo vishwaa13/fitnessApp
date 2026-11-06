@@ -133,7 +133,7 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
             profile_max_hr: float | None = None,
             upcoming_events: list[dict] | None = None,
             soreness: list[dict] | None = None, drinks: dict[str, dict[str, float]] | None = None,
-            food_url: str | None = None) -> dict[str, Any]:
+            food_url: str | None = None, logged_drinks: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
     today = now.date()
     activities = sorted((dict(a) for a in activities), key=lambda a: a["start"])
     daily = sorted(daily, key=lambda r: r["date"])
@@ -160,12 +160,16 @@ def analyze(*, activities: list[dict], daily: list[dict], gym_text: str | None,
     plan["unparsed"] = [{"date": s.date.isoformat(), "lines": s.unparsed} for s in sessions[-10:] if s.unparsed]
     plan["recent_sessions"] = [s.to_dict() for s in sessions[-8:]][::-1]
 
+    # Drinks logged on the Food tab make that evening an alcohol evening too.
+    manual_tags = {k: list(v) for k, v in manual_tags.items()}
+    for iso in logged_drinks or {}:
+        manual_tags.setdefault(iso, []).append("alcohol")
     tags = recovery.evening_tags(daily, activities, tourneys, manual_tags, cfg["recovery"], home,
                                  cfg["injury"]["high_day_load"])
     rec = recovery.analyse(daily, tags, int(cfg["recovery"]["window_days"]), today)
 
     alcohol = {day for day, items in tags.items() if "alcohol" in items}
-    evenings = alcohol_mod.evenings(daily, tags, drinks or {}, today)
+    evenings = alcohol_mod.evenings(daily, tags, drinks or {}, today, logged=logged_drinks)
     inj = injury.build(activities, daily, cfg["injury"], today,
                        injury.Signals(pain=pain, sets=sets, soreness=soreness, alcohol=alcohol))
 
@@ -300,9 +304,11 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
 
     # --- Food sheet: just check it answers; the site reads and writes it --------
     food_url = os.getenv("FOOD_SHEET_URL", "").strip()
+    logged_drinks: dict[str, dict[str, float]] = {}
     if food_url:
         if food.settings(cfg, food_url)["store"]["url"]:
-            sources["food_sheet"], counts = food.check_sheet(food_url)
+            sources["food_sheet"], counts, food_log = food.check_sheet(food_url)
+            logged_drinks = food.drinks_by_day(food_log)
             log.info("Food sheet: %s%s", sources["food_sheet"],
                      f", {counts['entries']} entries, {counts['options']} added options" if counts else "")
         else:
@@ -342,7 +348,7 @@ def run(cfg: dict, out_dir: Path, cache_path: Path, *, dry_run: bool = False,
     data = analyze(activities=activities, daily=daily, gym_text=gym_text, manual_tags=manual_tags,
                    cfg=cfg, now=now, calendar_events=events, sources=sources, profile_max_hr=profile_max,
                    upcoming_events=upcoming, soreness=soreness, drinks=note_drinks,
-                   food_url=food_url)
+                   food_url=food_url, logged_drinks=logged_drinks)
     data["travel"] = other_flights
     if garmin is not None and garmin.lifestyle_sample:
         data["garmin_lifestyle_sample"] = garmin.lifestyle_sample

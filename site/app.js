@@ -683,7 +683,7 @@
         : h("p", { class: "note" }, `No alcohol logged in ${name}` + (p && p.evenings ? ` (${p.evenings} evening${p.evenings === 1 ? "" : "s"} in ${prevName}).` : ".")),
       types.length ? h("div", { class: "pills", "aria-label": "Drinks by type" }, types.map(([k, v]) => h("span", { class: "pill drink" }, h("b", null, fmt(v)), plural(k, v)))) : null,
       effect,
-      h("p", { class: "small muted" }, "From Garmin's lifestyle log, plus lines like \u201c27/10 3 beers\u201d in your recovery tags note. Garmin's amount wins when both have one."));
+      h("p", { class: "small muted" }, "From the Food tab's Alcohol section, Garmin's lifestyle log, and lines like \u201c27/10 3 beers\u201d in your recovery tags note. One source per evening: the Food tab first, then Garmin, so nothing counts twice. Food tab drinks show up after the next refresh."));
   }
   // Garmin's raw drinks log for a day the reader couldn't make sense of; gone once the reader handles it.
   function lifestyleSampleCard() {
@@ -825,7 +825,9 @@
   // later: each sync sends what changed here and gets the whole log back. Entries and meal options
   // merge by id (newest edit wins, removals included), so two phones logging at once don't clash.
   const FOOD_KEY = "morningcheck.food";
-  const SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"], ["misc", "Misc"]];
+  const SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"], ["alcohol", "Alcohol"], ["misc", "Misc"]];
+  // Alcohol is logged one row per drink, so "3 beers" is three taps (or 3 in the form) and the sheet counts them.
+  const drinksText = n => `${n} drink${n === 1 ? "" : "s"}`;
   const food = { log: null, dirty: null, syncedAt: null, sheet: null, state: "local", error: "",
     loaded: null, busy: null, again: false, timer: null };
   let foodDay = null, foodWeekOffset = 0, foodView = null;
@@ -1032,28 +1034,44 @@
   }
   // "Other…" under each meal: log a one-off food, or keep it as an option for that meal. Misc shows it open.
   function otherForm(slot, slotName) {
-    const misc = slot === "misc";
-    const name = h("input", { type: "text", maxlength: "80", required: true, placeholder: misc ? "What did you eat?" : "Food", "aria-label": `${slotName}: food name`, autocomplete: "off" });
-    const kcal = h("input", { type: "number", inputmode: "numeric", min: "0", max: "5000", step: "1", required: true, placeholder: "kcal", "aria-label": `${slotName}: calories` });
-    const protein = h("input", { type: "number", inputmode: "decimal", min: "0", max: "400", step: "0.5", placeholder: "Protein g", "aria-label": `${slotName}: protein in grams (optional)` });
+    const misc = slot === "misc", drink = slot === "alcohol";
+    const name = h("input", { type: "text", maxlength: "80", required: true, placeholder: misc ? "What did you eat?" : drink ? "Drink" : "Food",
+      "aria-label": `${slotName}: ${drink ? "drink" : "food"} name`, autocomplete: "off" });
+    const kcal = h("input", { type: "number", inputmode: "numeric", min: "0", max: "5000", step: "1", required: true,
+      placeholder: drink ? "e.g. 140" : "kcal", "aria-label": `${slotName}: calories${drink ? " per drink" : ""}` });
+    const protein = drink ? null : h("input", { type: "number", inputmode: "decimal", min: "0", max: "400", step: "0.5", placeholder: "Protein g", "aria-label": `${slotName}: protein in grams (optional)` });
+    const count = drink ? h("input", { type: "number", inputmode: "numeric", min: "1", max: "30", step: "1", value: "1", required: true, "aria-label": `${slotName}: number of drinks` }) : null;
+    const total = drink ? h("span", { class: "small muted", "aria-live": "polite" }) : null;
+    const showTotal = () => {
+      if (!total) return;
+      const k = kcal.valueAsNumber, n = count.valueAsNumber;
+      total.textContent = Number.isFinite(k) && Number.isFinite(n) && n > 1 ? `${n} × ${kc(k)} = ${kc(n * k)} kcal` : "";
+    };
     const keep = h("input", { type: "checkbox", id: `keep-${slot}` });
     const err = h("span", { class: "err small", role: "alert" });
     const form = h("form", { class: "other", hidden: !misc },
-      h("div", { class: "other-fields" }, name, kcal, protein),
+      h("div", { class: "other-fields" + (drink ? " drink-fields" : "") }, name,
+        drink ? h("label", { class: "count-field" }, h("span", { class: "small muted" }, "kcal per drink"), kcal) : kcal,
+        drink ? h("label", { class: "count-field" }, h("span", { class: "small muted" }, "Number of drinks"), count) : protein),
+      total,
       h("div", { class: "row-gap" },
         h("label", { class: "check small", for: `keep-${slot}` }, keep, misc ? " Keep as a misc option" : ` Add to ${slotName.toLowerCase()} options`),
         h("button", { type: "submit", class: "btn sm" }, "Add"), err));
+    if (drink) { kcal.addEventListener("input", showTotal); count.addEventListener("input", showTotal); }
     form.addEventListener("submit", e => {
       e.preventDefault();
-      const item = { name: name.value.trim(), kcal: kcal.valueAsNumber, protein: protein.value === "" ? 0 : protein.valueAsNumber };
+      const item = { name: name.value.trim(), kcal: kcal.valueAsNumber, protein: !protein || protein.value === "" ? 0 : protein.valueAsNumber };
+      const n = drink ? count.valueAsNumber : 1;
       if (!item.name || !Number.isFinite(item.kcal) || item.kcal < 0 || !Number.isFinite(item.protein) || item.protein < 0) {
-        err.textContent = "Give it a name and its calories.";
+        err.textContent = drink ? "Give the drink a name and its calories." : "Give it a name and its calories.";
         return;
       }
+      if (!Number.isInteger(n) || n < 1 || n > 30) { err.textContent = "Number of drinks: 1 to 30."; return; }
       err.textContent = "";
       if (keep.checked) item.id = saveOption(slot, item);
-      logItem(foodDay, slot, item);
+      for (let i = 0; i < n; i++) logItem(foodDay, slot, item);
       form.reset();
+      showTotal();
       if (!misc) toggle(false);
     });
     const opener = misc ? null : h("button", { type: "button", class: "opt other-btn", "aria-expanded": "false", onclick: () => toggle(form.hidden) }, "Other…");
@@ -1069,14 +1087,17 @@
     v.sub.textContent = xs.length ? `${xs.length} item${xs.length === 1 ? "" : "s"} logged` : "Nothing logged yet";
     v.meters.replaceChildren(meter("Calories", sum(xs, "kcal"), t.kcal, " kcal"), meter("Protein", sum(xs, "protein"), t.protein, " g"));
     for (const [slot, name] of SLOTS) {
-      const s = v.slots[slot], mine = xs.filter(e => e.slot === slot);
-      s.total.textContent = mine.length ? macro({ kcal: sum(mine, "kcal"), protein: sum(mine, "protein") }) : "";
+      const s = v.slots[slot], mine = xs.filter(e => e.slot === slot), drink = slot === "alcohol";
+      s.total.textContent = !mine.length ? "" : drink ? `${drinksText(mine.length)} · ${kc(sum(mine, "kcal"))} kcal`
+        : macro({ kcal: sum(mine, "kcal"), protein: sum(mine, "protein") });
+      const optText = m => (drink ? `${kc(m.kcal)} kcal each` : macro(m));
       fill(s.opts, mealOptions(slot).map(m => h("span", { class: "opt-wrap" },
-        h("button", { type: "button", class: "opt", onclick: () => logItem(foodDay, slot, m), "aria-label": `Add ${m.name} to ${name}, ${macro(m)}` },
-          h("span", { class: "opt-plus", "aria-hidden": "true" }, "+"), h("span", { class: "opt-name" }, m.name), h("span", { class: "opt-macro" }, macro(m))),
+        h("button", { type: "button", class: "opt", onclick: () => logItem(foodDay, slot, m), "aria-label": drink ? `Add one ${m.name}, ${optText(m)}` : `Add ${m.name} to ${name}, ${macro(m)}` },
+          h("span", { class: "opt-plus", "aria-hidden": "true" }, "+"), h("span", { class: "opt-name" }, m.name), h("span", { class: "opt-macro" }, optText(m))),
         h("button", { type: "button", class: "opt-x", title: `Remove ${m.name} from ${name} options`, "aria-label": `Remove ${m.name} from ${name} options`,
           onclick: () => { removeOption(m); v.note.replaceChildren(`Removed ${m.name} from the ${name.toLowerCase()} options.`); } }, "×"))),
         s.form.opener);
+      if (drink) { fill(s.items, drinkRows(mine)); continue; }
       fill(s.items, mine.map(e => h("div", { class: "row" },
         h("div", null, h("span", { class: "row-title" }, e.name), h("div", { class: "small muted" }, [e.time, macro(e)].filter(Boolean).join(" · "))),
         h("button", { type: "button", class: "linkbtn small", "aria-label": `Remove ${e.name}`, onclick: () => {
@@ -1084,6 +1105,31 @@
           v.note.replaceChildren(`Removed ${e.name}. `, h("button", { type: "button", class: "linkbtn", onclick: () => { setEntry(e.id, false); v.note.replaceChildren(); } }, "Undo"));
         } }, "Remove"))));
     }
+  }
+  // Logged drinks, one row per kind: "Beer (33 cl) × 3 · 420 kcal  [−] 3 [+]".
+  function drinkRows(mine) {
+    const v = foodView, groups = new Map();
+    for (const e of mine) {
+      const k = `${e.name}|${e.kcal}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e);
+    }
+    return [...groups.values()].map(es => {
+      const last = es[es.length - 1], n = es.length;
+      const times = [...new Set(es.map(e => e.time).filter(Boolean))].sort();
+      const when = times.length > 1 ? `${times[0]}–${times[times.length - 1]}` : times[0];
+      return h("div", { class: "row drink-row" },
+        h("div", null, h("span", { class: "row-title" }, last.name),
+          h("div", { class: "small muted" }, [`${drinksText(n)} · ${kc(sum(es, "kcal"))} kcal`, when].filter(Boolean).join(" · "))),
+        h("div", { class: "stepper", role: "group", "aria-label": `${last.name}: ${drinksText(n)}` },
+          h("button", { type: "button", class: "step", "aria-label": `One ${last.name} fewer`, onclick: () => {
+            setEntry(last.id, true);
+            v.note.replaceChildren(`Removed one ${last.name}. `, h("button", { type: "button", class: "linkbtn", onclick: () => { setEntry(last.id, false); v.note.replaceChildren(); } }, "Undo"));
+          } }, "−"),
+          h("span", { class: "step-n num", "aria-hidden": "true" }, String(n)),
+          h("button", { type: "button", class: "step", "aria-label": `One more ${last.name}`,
+            onclick: () => logItem(foodDay, "alcohol", { name: last.name, kcal: last.kcal, protein: last.protein, id: last.meal }) }, "+")));
+    });
   }
   function paintWeek() {
     const v = foodView, today = localToday();
@@ -1104,6 +1150,8 @@
     }
     const items = Object.values(eaten).sort((a, b) => b.kcal - a.kcal);
     const avgK = avg("kcal");
+    const drinks = logged.flatMap(r => r.xs.filter(e => e.slot === "alcohol"));
+    const drinkDays = new Set(drinks.map(e => e.date)).size;
     fill(v.weekCard,
       band("Food this week", `${C.fmtDay(start)} – ${C.fmtDay(end)}`,
         avgK == null ? "Nothing logged this week" : `Average ${kc(avgK)} kcal a day over ${logged.length} logged day${logged.length === 1 ? "" : "s"}`,
@@ -1111,7 +1159,8 @@
       logged.length ? h("div", { class: "tiles" },
         tile("Average calories", `${kc(avgK)}`, t.kcal ? `kcal a day · target ${kc(t.kcal[0])}–${kc(t.kcal[1])}` : "kcal a day"),
         tile("Average protein", `${kc(avg("protein"))} g`, t.protein ? `a day · target ${kc(t.protein[0])}–${kc(t.protein[1])} g` : "a day"),
-        tile("Days logged", `${logged.length} of ${dates.filter(d => d <= today).length}`, "averages count only these days")) : null,
+        tile("Days logged", `${logged.length} of ${dates.filter(d => d <= today).length}`, "averages count only these days"),
+        drinks.length ? tile("Alcohol", drinksText(drinks.length), `${kc(sum(drinks, "kcal"))} kcal · ${drinkDays} evening${drinkDays === 1 ? "" : "s"}`) : null) : null,
       h("div", { class: "fw" },
         h("span", null), h("span", { class: "wd-h" }, "Calories"), h("span", { class: "wd-h num" }, "kcal"), h("span", { class: "wd-h num" }, "Protein"),
         rows.map(r => [
@@ -1122,7 +1171,7 @@
           h("span", { class: "num" }, r.xs.length ? kc(r.kcal) : (r.d > today ? "" : "–")),
           h("span", { class: "num muted" }, r.xs.length ? `${kc(r.protein)} g` : "")])),
       t.kcal ? h("div", { class: "legend" }, h("span", null, h("i", { class: "box", style: "background:var(--accent);opacity:.25" }), `Target ${kc(t.kcal[0])}–${kc(t.kcal[1])} kcal`)) : null,
-      items.length ? [sect("What you ate"), h("div", { class: "rows" }, items.map(x => h("div", { class: "row" },
+      items.length ? [sect(drinks.length ? "What you ate and drank" : "What you ate"), h("div", { class: "rows" }, items.map(x => h("div", { class: "row" },
         h("div", null, h("span", { class: "row-title" }, x.name), h("span", { class: "muted small" }, ` × ${x.n}`)),
         h("span", { class: "num small" }, macro(x)))))] : null);
   }

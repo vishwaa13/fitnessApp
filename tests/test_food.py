@@ -57,11 +57,35 @@ def test_sheet_check_counts_live_rows_and_explains_failures():
     import requests
     url = "https://script.google.com/macros/s/AKfy-test/exec"
     ok = {"ok": True, "entries": {"a": {"id": "a"}, "b": {"id": "b", "deleted": True}}, "meals": {"m": {"id": "m"}}}
-    assert food.check_sheet(url, get=lambda u, timeout: _Resp(ok)) == ("ok", {"entries": 1, "options": 1})
-    status, counts = food.check_sheet(url, get=lambda u, timeout: _Resp(None))       # Google's sign-in page
-    assert status.startswith("error: not JSON") and "Anyone" in status and counts == {}
+    assert food.check_sheet(url, get=lambda u, timeout: _Resp(ok)) == ("ok", {"entries": 1, "options": 1}, ok)
+    status, counts, log = food.check_sheet(url, get=lambda u, timeout: _Resp(None))       # Google's sign-in page
+    assert status.startswith("error: not JSON") and "Anyone" in status and counts == {} and log == {}
     assert food.check_sheet(url, get=lambda u, timeout: _Resp({"ok": False, "error": "That wasn't JSON."}))[0] == "error: That wasn't JSON."
 
     def boom(u, timeout):
         raise requests.ConnectionError("no route")
     assert food.check_sheet(url, get=boom)[0] == "error: ConnectionError"
+
+
+def test_drinks_logged_under_alcohol_are_counted_by_day_and_type():
+    log = {"entries": {
+        "1": {"date": "2026-11-06", "slot": "alcohol", "name": "Beer (33 cl)", "kcal": 140},
+        "2": {"date": "2026-11-06", "slot": "alcohol", "name": "Beer (33 cl)", "kcal": 140},
+        "3": {"date": "2026-11-06", "slot": "alcohol", "name": "Gin & tonic", "kcal": 170},
+        "4": {"date": "2026-11-06", "slot": "alcohol", "name": "Beer (33 cl)", "kcal": 140, "deleted": True},   # removed
+        "5": {"date": "2026-11-07", "slot": "alcohol", "name": "Glass of rosé", "kcal": 125, "drinks": 2},
+        "6": {"date": "2026-11-06", "slot": "snacks", "name": "Kakaomælk (200 ml)", "kcal": 140},           # not alcohol
+    }}
+    assert food.drinks_by_day(log) == {"2026-11-06": {"beer": 2, "cocktail": 1}, "2026-11-07": {"wine": 2}}
+    assert food.drinks_by_day({}) == {}
+    kinds = {n: food.drink_type(n) for n in ["Beer (33 cl)", "Carlsberg øl", "IPA", "Wine (15 cl glass)", "Prosecco",
+                                             "Spirit (4 cl shot)", "Vodka shot", "Snaps", "Cocktail", "Mojito", "Cider (33 cl)", "Mead"]}
+    assert kinds == {"Beer (33 cl)": "beer", "Carlsberg øl": "beer", "IPA": "beer", "Wine (15 cl glass)": "wine", "Prosecco": "wine",
+                     "Spirit (4 cl shot)": "spirit", "Vodka shot": "spirit", "Snaps": "spirit", "Cocktail": "cocktail",
+                     "Mojito": "cocktail", "Cider (33 cl)": "cider", "Mead": "other"}
+
+
+def test_alcohol_section_has_the_default_drinks():
+    out = food.settings(load_config())
+    drinks = {m["name"]: m["kcal"] for m in out["meals"] if "alcohol" in m["slots"]}
+    assert drinks == {"Beer (33 cl)": 140, "Wine (15 cl glass)": 125, "Spirit (4 cl shot)": 95, "Cocktail": 200, "Cider (33 cl)": 150}

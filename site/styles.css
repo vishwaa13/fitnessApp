@@ -202,6 +202,13 @@ button, input, select { font: inherit; color: inherit; }
 .editing .opt-x { display: inline-block; }
 .editing .opt-wrap .opt { border-radius: 12px 0 0 12px; }
 .slot-items:empty { display: none; }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.step { width: 40px; height: 40px; border-radius: 10px; border: 1px solid color-mix(in oklab, var(--food) 35%, var(--line));
+        background: var(--surface); color: var(--ink); font-size: 1.2rem; font-weight: 700; cursor: pointer; }
+.step:hover { background: color-mix(in oklab, var(--food) 10%, var(--surface)); }
+.step-n { min-width: 2ch; text-align: center; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.other-fields.drink-fields { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 0.8fr); align-items: end; }
+.count-field { display: grid; gap: 2px; }
 .slot-items .row:first-child { padding-top: 6px; }
 .other { display: grid; gap: 8px; }
 .other-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
@@ -221,6 +228,7 @@ label.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--fo
 @media (max-width: 560px) {
   .other-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .other-fields input:first-child { grid-column: 1 / -1; }
+  .other-fields.drink-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .where-fields { grid-template-columns: minmax(0, 1fr); }
 }
 /* Status swatch: the morning colour with its mark, so the colour never carries the meaning alone. */

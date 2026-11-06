@@ -9,10 +9,10 @@ data every morning and published on GitHub Pages. It has five parts:
 | **Tournament auto-report** | Groups games by place and date (Viareggio → Burla) and reports per-game load, average and peak HR, how intensity faded across the days, total load, and how many days your HRV took to come back. A season table ranks what each event cost you. |
 | **Progressive overload builder** | Reads your Google Keep note **gym logs**, applies double progression to every lift, and uploads the next session to Garmin as a strength workout with the weight and reps for each set, so the watch tells you what to hit. It also writes the lifts you actually did into the matching Garmin activity's description. On the Today tab, **Last time** shows the date and sets of the last session of each of your main lifts (and any pain note since), so you know what to beat: the compound lifts you did 3+ times in the last 8 weeks, or your own list under `overload.main_lifts`. Every other lift is a search away, best match first, then the one you did most recently. |
 | **Recovery correlations** | Plots HRV and sleep against alcohol, late training, late bedtimes, travel, tournament days and big training days, then measures each one's effect on your next-morning numbers with a confidence range. Bedtime consistency shows when you fell asleep and woke over the last 28 nights, how much it moves, your weekend shift, and what a late night does to your HRV. |
-| **Alcohol by month** | On the Month tab: evenings, drinks and drinks by type for each month against the one before, your biggest evening, and what drinking does to your next-morning HRV. Amounts come from Garmin's lifestyle log, or lines like `27/10 3 beers` in your recovery tags note. Evenings you drank get an orange dot on the calendar. |
+| **Alcohol by month** | On the Month tab: evenings, drinks and drinks by type for each month against the one before, your biggest evening, and what drinking does to your next-morning HRV. Amounts come from the Food tab's Alcohol section, Garmin's lifestyle log, or lines like `27/10 3 beers` in your recovery tags note (in that order, one source per evening, so nothing counts twice). Evenings you drank get an orange dot on the calendar. |
 | **Month view and week in review** | A calendar of 16 weeks of morning colours and daily load; tap any day to see why it got its colour, what you did and what happened the day before. Mornings by weekday shows which days tend to be red (Mondays after weekend tournaments, say). The week in review compares each Monday-to-Sunday week with the one before: load, sessions, rest days, colours, HRV, sleep, bedtime, alcohol, gym sets per body part and the warnings raised. It also shows on the Today tab on Sundays and Mondays. |
 | **Injury early-warning** | Scans for the patterns that come before strains: pain and soreness you noted, a load spike (acute:chronic ratio), no rest days, back-to-back hard days, monotony, HRV stuck under baseline, gym sets per body part jumping above their 4-week average, the first session back after two weeks off, and alcohol (from Garmin's lifestyle log or your notes). Add your glute strain date and it shows what the day before it looked like and warns when today matches. |
-| **Food log** | A Food tab with breakfast, lunch, dinner, snacks and misc. Tap one of your usual meals under each (set in `config.yml`), add anything else with its calories, and save it as a new option if you'll have it again. Calories and protein for the day against your targets, and a Monday-to-Sunday summary with your average calories per day and what you ate. Saved to a Google Sheet you can open, so every device sees the same log. |
+| **Food log** | A Food tab with breakfast, lunch, dinner, snacks, alcohol and misc. Tap one of your usual meals under each (set in `config.yml`), add anything else with its calories, and save it as a new option if you'll have it again. Calories and protein for the day against your targets, and a Monday-to-Sunday summary with your average calories per day and what you ate. Saved to a Google Sheet you can open, so every device sees the same log. |
 | **Upcoming events** | Lists future frisbee events from your calendar (tryouts, Pesca Disco, EBUCC, Gurls Hat…) with a countdown, the venue, and the flights around each one. Optionally looks up each event's venue and surface for free with Gemini and Google Search. |
 
 Until you add your secrets the site shows **demo data** with a banner, so you
@@ -204,7 +204,7 @@ A lift you haven't done for two weeks (`injury.break_days`) restarts 10% lighter
 
 ## Food log
 
-The **Food** tab logs what you eat, one section per meal: tap a meal to add it,
+The **Food** tab logs what you eat and drink, one section per meal: tap a meal to add it,
 or use **Other…** (under Misc, the form is already open) for anything else with
 its calories and, optionally, protein. Tick *Add to … options* to keep it as a
 one-tap option. **Edit options** removes options you no longer want. The tab
@@ -212,7 +212,13 @@ totals the day against `food.targets` and summarises each Monday-to-Sunday week:
 average calories and protein per day (counting only the days you logged), the
 days against your target, and everything you ate.
 
-The usual meals and targets live under `food:` in `config.yml`.
+**Alcohol** works the same way, per drink: each tap on Beer, Wine, Spirit, Cocktail or
+Cider logs one drink at its calories, − and + adjust the count, and **Other…** takes a
+drink, its calories per drink and the number of drinks. Drinks count in the day's
+calories, get their own tile in the weekly summary, and from the next refresh they're
+the alcohol evenings the Month tab, recovery correlations and injury warnings use.
+
+The usual meals, drinks and targets live under `food:` in `config.yml`.
 
 **Where the log is saved: a Google Sheet** (about 5 minutes, once). No sign-in
 or token is needed on your devices; unlocking the dashboard is enough.

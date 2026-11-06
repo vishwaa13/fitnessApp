@@ -1,8 +1,9 @@
-"""Alcohol by evening and by month, from Garmin's lifestyle log and the recovery tags note.
+"""Alcohol by evening and by month, from the Food tab, Garmin's lifestyle log and the recovery tags note.
 
-An evening counts when either source says you drank. The amount comes from
-Garmin when it has one (drinks by type), else from the note ("3 beers"), else
-it's unknown, which is still an evening.
+An evening counts when any source says you drank. The amount comes from the
+Food tab's Alcohol section when you logged drinks there, else from Garmin
+(drinks by type), else from the note ("3 beers"), else it's unknown, which is
+still an evening. One source per evening, so drinks logged twice count once.
 """
 
 from __future__ import annotations
@@ -11,21 +12,24 @@ from datetime import date, timedelta
 from typing import Any
 
 
-PLURAL = {"beer": "beers", "cocktail": "cocktails", "cider": "ciders", "shot": "shots"}
+PLURAL = {"beer": "beers", "cocktail": "cocktails", "cider": "ciders", "shot": "shots", "spirit": "spirits",
+          "wine": "wines", "other": "other drinks"}
 
 
 def evenings(daily: list[dict], tags: dict[date, set[str]], note: dict[str, dict[str, float]],
-             today: date, days: int = 190) -> dict[str, dict[str, Any]]:
+             today: date, days: int = 190, logged: dict[str, dict[str, float]] | None = None) -> dict[str, dict[str, Any]]:
     garmin = {r["date"]: r.get("drinks") for r in daily}
+    logged = logged or {}
     out = {}
     for day, items in sorted(tags.items()):
         if "alcohol" not in items or not 0 <= (today - day).days <= days:
             continue
         iso = day.isoformat()
-        types = garmin.get(iso) or note.get(iso) or {}
+        source = next((name for name, src in (("food log", logged), ("garmin", garmin), ("note", note)) if src.get(iso)), None)
+        types = {"food log": logged, "garmin": garmin, "note": note}[source][iso] if source else {}
         out[iso] = {"types": {k: round(v, 1) for k, v in sorted(types.items(), key=lambda kv: -kv[1])},
                     "total": round(sum(types.values()), 1) if types else None,
-                    "source": "garmin" if garmin.get(iso) else "note" if note.get(iso) else None}
+                    "source": source}
     return out
 
 

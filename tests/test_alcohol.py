@@ -38,3 +38,17 @@ def test_evenings_prefer_garmin_and_months_add_up():
     assert (oct_["month"], oct_["evenings"], oct_["drinks"], oct_["unknown"], oct_["partial"]) == ("2026-10", 3, 5, 1, True)
     assert oct_["types"] == {"beer": 3, "wine": 2} and oct_["biggest"] == {"date": "2026-10-03", "total": 3}
     assert oct_["per_evening"] == 2.5 and (sep["evenings"], sep["drinks"], sep["partial"]) == (1, 4, False)
+
+
+
+def test_food_log_drinks_win_over_garmin_and_the_note_for_the_same_evening():
+    from datetime import date
+    from fitapp import alcohol
+    today = date(2026, 11, 6)
+    tags = {date(2026, 11, 5): {"alcohol"}, date(2026, 11, 4): {"alcohol"}, date(2026, 11, 3): {"alcohol"}}
+    daily = [{"date": "2026-11-05", "drinks": {"beer": 4}}, {"date": "2026-11-04", "drinks": {"wine": 2}}]
+    note = {"2026-11-05": {"beer": 5}, "2026-11-03": {"cocktail": 1}}
+    logged = {"2026-11-05": {"beer": 3}}
+    out = alcohol.evenings(daily, tags, note, today, logged=logged)
+    assert out["2026-11-05"] == {"types": {"beer": 3}, "total": 3, "source": "food log"}     # counted once, from the Food tab
+    assert out["2026-11-04"]["source"] == "garmin" and out["2026-11-03"]["source"] == "note"

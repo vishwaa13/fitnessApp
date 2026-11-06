@@ -150,6 +150,12 @@ food:
     - {name: "Kakaomælk (200 ml)", kcal: 140, protein: 7, slots: [snacks]}
     # A mug: 250 ml letmælk + ~20 g cocoa drink powder. With whole milk it's ~235 kcal.
     - {name: "Hot chocolate (250 ml)", kcal: 190, protein: 9, slots: [snacks]}
+    # Alcohol: kcal per drink. Each tap logs one drink; they count in the alcohol stats too.
+    - {name: "Beer (33 cl)", kcal: 140, protein: 1, slots: [alcohol]}
+    - {name: "Wine (15 cl glass)", kcal: 125, protein: 0, slots: [alcohol]}
+    - {name: "Spirit (4 cl shot)", kcal: 95, protein: 0, slots: [alcohol]}
+    - {name: "Cocktail", kcal: 200, protein: 0, slots: [alcohol]}
+    - {name: "Cider (33 cl)", kcal: 150, protein: 0, slots: [alcohol]}
   # The log itself is saved to a Google Sheet: README → Food log.
 
 # ---------------------------------------------------------------------------
