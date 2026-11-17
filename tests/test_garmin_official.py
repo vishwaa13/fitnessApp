@@ -188,3 +188,16 @@ def test_empty_activity_answer_with_recent_history_falls_back(monkeypatch):
     src = source(routes=routes, cache=cache, monkeypatch=monkeypatch)
     src.activities(TODAY - timedelta(days=30), TODAY)
     assert "get_activities" in src.api.reads      # asked the login instead
+
+
+def test_sleep_without_a_score_falls_back_to_the_login(monkeypatch):
+    routes = dict(OFFICIAL_ROUTES, **{"/sleep-service/sleep/dailySleep": Resp(body={"dailySleepDTO": {"sleepTimeSeconds": 27000}})})
+    src = source(routes=routes, monkeypatch=monkeypatch)
+    src.daily(TODAY, TODAY)
+    assert "get_sleep_data" in src.api.reads and src.served["sleep"].get("api without score") == 1
+
+
+def test_already_wrapped_sleep_is_not_wrapped_twice():
+    a = api({"/sleep-service/sleep/dailySleep": Resp(body={"dailySleepDTO": {"sleepScores": {"overall": {"value": 80}}}})})
+    a.connect()
+    assert g.has_sleep_score(a.sleep(DS))

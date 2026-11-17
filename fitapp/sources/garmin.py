@@ -244,6 +244,11 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def has_sleep_score(sleep: Any) -> bool:
+    dto = (sleep or {}).get("dailySleepDTO") or {}
+    return ((dto.get("sleepScores") or {}).get("overall") or {}).get("value") is not None
+
+
 def _complete(row: dict) -> bool:
     return row.get("hrv") is not None and row.get("sleep_score") is not None
 
@@ -305,12 +310,15 @@ class GarminSource:
         counts = self.served.setdefault(metric, {})
         counts[source] = counts.get(source, 0) + 1
 
-    def _read(self, official_fn, unofficial_fn, *args, metric: str | None = None):
-        """Official API first; the unofficial login when that's off or fails for this read."""
+    def _read(self, official_fn, unofficial_fn, *args, metric: str | None = None, usable=None):
+        """Official API first; the unofficial login when that's off, fails, or (``usable``) lacks what we need."""
         metric = metric or getattr(official_fn, "__name__", "read")
         if self.status["api"] == "ok":
             try:
                 value = official_fn(*args)
+                if value is not None and usable is not None and not usable(value):
+                    self._tally(metric, "api without score")
+                    value = None
                 if value is not None:
                     self._tally(metric, "api")
                     return value
@@ -439,7 +447,7 @@ class GarminSource:
             row = normalize_day(
                 day,
                 self._read(official.hrv, api and api.get_hrv_data, ds),
-                self._read(official.sleep, api and api.get_sleep_data, ds),
+                self._read(official.sleep, api and api.get_sleep_data, ds, usable=has_sleep_score),
                 self._call(api.get_training_readiness, ds) if api is not None else None,
                 self._read(official.summary, api and api.get_user_summary, ds),
                 lifestyle[-1] if api is not None else None,

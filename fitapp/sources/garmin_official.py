@@ -131,6 +131,8 @@ class PersonalApi:
     def sleep(self, day: str) -> Any:
         """Wrapped like the unofficial library's {"dailySleepDTO": {...}} so one parser reads both."""
         dto = self.get("/sleep-service/sleep/dailySleep", date=day)
+        if isinstance(dto, dict) and isinstance(dto.get("dailySleepDTO"), dict):
+            return dto                      # already wrapped
         return {"dailySleepDTO": dto} if dto else None
 
     def summary(self, day: str) -> Any:
